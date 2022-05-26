@@ -3,12 +3,13 @@ package nodes
 import (
 	"context"
 	"encoding/json"
-	"github.com/loft-sh/vcluster/pkg/util/stringutil"
 
-	"github.com/loft-sh/vcluster/pkg/controllers/resources/nodes/nodeservice"
-	synccontext "github.com/loft-sh/vcluster/pkg/controllers/syncer/context"
-	"github.com/loft-sh/vcluster/pkg/util/translate"
+	"github.com/spectrocloud/vcluster/pkg/util/stringutil"
+
 	"github.com/pkg/errors"
+	"github.com/spectrocloud/vcluster/pkg/controllers/resources/nodes/nodeservice"
+	synccontext "github.com/spectrocloud/vcluster/pkg/controllers/syncer/context"
+	"github.com/spectrocloud/vcluster/pkg/util/translate"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/resource"

@@ -2,19 +2,20 @@ package cmd
 
 import (
 	"context"
-	"github.com/loft-sh/vcluster/pkg/certs"
-	"github.com/loft-sh/vcluster/pkg/util/clienthelper"
-	"github.com/pkg/errors"
-	"github.com/spf13/cobra"
 	"io/ioutil"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"github.com/pkg/errors"
+	"github.com/spectrocloud/vcluster/pkg/certs"
+	"github.com/spectrocloud/vcluster/pkg/util/clienthelper"
+	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog"
-	"path/filepath"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"strconv"
-	"strings"
 )
 
 // CertsCmd holds the certs flags

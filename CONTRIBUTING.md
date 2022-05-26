@@ -20,7 +20,7 @@ This is just a short list of ideas, if you have other ideas for contributing ple
 
 ### Setup vcluster for Development
 
-We recommend to develop vcluster directly in a Kubernetes cluster as it makes feedback a lot quicker. For the quick setup, you'll need to install [devspace](https://github.com/loft-sh/devspace#1-install-devspace), docker, kubectl, helm and make sure you have a local Kubernetes cluster (such as Docker Desktop, minikube, KinD or similar) installed.
+We recommend to develop vcluster directly in a Kubernetes cluster as it makes feedback a lot quicker. For the quick setup, you'll need to install [devspace](https://github.com/spectrocloud/devspace#1-install-devspace), docker, kubectl, helm and make sure you have a local Kubernetes cluster (such as Docker Desktop, minikube, KinD or similar) installed.
 
 Fork and clone the repo:
 - Click Fork button (top right) to establish a cloud-based fork.
@@ -70,7 +70,7 @@ Successfully tagged ghcr.io/loft-sh/loft-enterprise/dev-vcluster:szFLbkA
 
 [0:sync] Waiting for pods...
 [0:sync] Starting sync...
-[0:sync] Sync started on /Users/fabiankramm/Programmieren/go-workspace/src/github.com/loft-sh/vcluster <-> . (Pod: vcluster/vcluster-0)
+[0:sync] Sync started on /Users/fabiankramm/Programmieren/go-workspace/src/github.com/spectrocloud/vcluster <-> . (Pod: vcluster/vcluster-0)
 [0:sync] Waiting for initial sync to complete
 [info]   Opening shell to pod:container vcluster-0:syncer
 root@vcluster-0:/vcluster#
@@ -117,7 +117,7 @@ You can run the unit test suite with `./hack/test.sh` which should execute all t
 The e2e test suite can be run from the e2e folder(`cd e2e`) with this command - `go test -v -ginkgo.v`.  
 Alternatively, if you [install ginkgo binary](https://github.com/onsi/ginkgo#global-installation), you can run it with `ginkgo -v`.
 
-For running conformance tests, please take a look at [conformance tests](https://github.com/loft-sh/vcluster/tree/main/conformance/v1.21)
+For running conformance tests, please take a look at [conformance tests](https://github.com/spectrocloud/vcluster/tree/main/conformance/v1.21)
 
 ### License
 

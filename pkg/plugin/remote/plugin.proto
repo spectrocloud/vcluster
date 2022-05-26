@@ -3,7 +3,7 @@ syntax = "proto3";
 
 package remote;
 
-option go_package = "github.com/loft-sh/vcluster/pkg/plugin/remote";
+option go_package = "github.com/spectrocloud/vcluster/pkg/plugin/remote";
 
 service PluginInitializer {
     rpc Register (PluginInfo) returns (Context) {}

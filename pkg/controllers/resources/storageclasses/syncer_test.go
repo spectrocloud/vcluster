@@ -1,13 +1,14 @@
 package storageclasses
 
 import (
-	synccontext "github.com/loft-sh/vcluster/pkg/controllers/syncer/context"
-	"github.com/loft-sh/vcluster/pkg/controllers/syncer/translator"
-	"github.com/loft-sh/vcluster/pkg/util/translate"
-	"gotest.tools/assert"
 	"testing"
 
-	generictesting "github.com/loft-sh/vcluster/pkg/controllers/syncer/testing"
+	synccontext "github.com/spectrocloud/vcluster/pkg/controllers/syncer/context"
+	"github.com/spectrocloud/vcluster/pkg/controllers/syncer/translator"
+	"github.com/spectrocloud/vcluster/pkg/util/translate"
+	"gotest.tools/assert"
+
+	generictesting "github.com/spectrocloud/vcluster/pkg/controllers/syncer/testing"
 	"k8s.io/api/storage/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"

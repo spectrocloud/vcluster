@@ -1,14 +1,15 @@
 package networkpolicies
 
 import (
-	synccontext "github.com/loft-sh/vcluster/pkg/controllers/syncer/context"
-	"github.com/loft-sh/vcluster/pkg/controllers/syncer/translator"
-	"gotest.tools/assert"
 	"testing"
 
-	podstranslate "github.com/loft-sh/vcluster/pkg/controllers/resources/pods/translate"
-	generictesting "github.com/loft-sh/vcluster/pkg/controllers/syncer/testing"
-	"github.com/loft-sh/vcluster/pkg/util/translate"
+	synccontext "github.com/spectrocloud/vcluster/pkg/controllers/syncer/context"
+	"github.com/spectrocloud/vcluster/pkg/controllers/syncer/translator"
+	"gotest.tools/assert"
+
+	podstranslate "github.com/spectrocloud/vcluster/pkg/controllers/resources/pods/translate"
+	generictesting "github.com/spectrocloud/vcluster/pkg/controllers/syncer/testing"
+	"github.com/spectrocloud/vcluster/pkg/util/translate"
 
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

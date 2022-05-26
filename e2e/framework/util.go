@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/loft-sh/vcluster/pkg/util/podhelper"
-	"github.com/loft-sh/vcluster/pkg/util/translate"
+	"github.com/spectrocloud/vcluster/pkg/util/podhelper"
+	"github.com/spectrocloud/vcluster/pkg/util/translate"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"

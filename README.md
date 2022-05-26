@@ -63,7 +63,7 @@ Use one of the following commands to download the vcluster CLI binary from GitHu
 <summary>Mac (Intel/AMD)</summary>
 
 ```bash
-curl -s -L "https://github.com/loft-sh/vcluster/releases/latest" | sed -nE 's!.*"([^"]*vcluster-darwin-amd64)".*!https://github.com\1!p' | xargs -n 1 curl -L -o vcluster && chmod +x vcluster;
+curl -s -L "https://github.com/spectrocloud/vcluster/releases/latest" | sed -nE 's!.*"([^"]*vcluster-darwin-amd64)".*!https://github.com\1!p' | xargs -n 1 curl -L -o vcluster && chmod +x vcluster;
 sudo mv vcluster /usr/local/bin;
 ```
 
@@ -73,7 +73,7 @@ sudo mv vcluster /usr/local/bin;
 <summary>Mac (Silicon/ARM)</summary>
 
 ```bash
-curl -s -L "https://github.com/loft-sh/vcluster/releases/latest" | sed -nE 's!.*"([^"]*vcluster-darwin-arm64)".*!https://github.com\1!p' | xargs -n 1 curl -L -o vcluster && chmod +x vcluster;
+curl -s -L "https://github.com/spectrocloud/vcluster/releases/latest" | sed -nE 's!.*"([^"]*vcluster-darwin-arm64)".*!https://github.com\1!p' | xargs -n 1 curl -L -o vcluster && chmod +x vcluster;
 sudo mv vcluster /usr/local/bin;
 ```
 
@@ -83,7 +83,7 @@ sudo mv vcluster /usr/local/bin;
 <summary>Linux (AMD)</summary>
 
 ```bash
-curl -s -L "https://github.com/loft-sh/vcluster/releases/latest" | sed -nE 's!.*"([^"]*vcluster-linux-amd64)".*!https://github.com\1!p' | xargs -n 1 curl -L -o vcluster && chmod +x vcluster;
+curl -s -L "https://github.com/spectrocloud/vcluster/releases/latest" | sed -nE 's!.*"([^"]*vcluster-linux-amd64)".*!https://github.com\1!p' | xargs -n 1 curl -L -o vcluster && chmod +x vcluster;
 sudo mv vcluster /usr/local/bin;
 ```
 
@@ -93,7 +93,7 @@ sudo mv vcluster /usr/local/bin;
 <summary>Linux (ARM)</summary>
 
 ```bash
-curl -s -L "https://github.com/loft-sh/vcluster/releases/latest" | sed -nE 's!.*"([^"]*vcluster-linux-arm64)".*!https://github.com\1!p' | xargs -n 1 curl -L -o vcluster && chmod +x vcluster;
+curl -s -L "https://github.com/spectrocloud/vcluster/releases/latest" | sed -nE 's!.*"([^"]*vcluster-linux-arm64)".*!https://github.com\1!p' | xargs -n 1 curl -L -o vcluster && chmod +x vcluster;
 sudo mv vcluster /usr/local/bin;
 ```
 
@@ -104,7 +104,7 @@ sudo mv vcluster /usr/local/bin;
 
 ```bash
 md -Force "$Env:APPDATA\vcluster"; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]'Tls,Tls11,Tls12';
-Invoke-WebRequest -UseBasicParsing ((Invoke-WebRequest -URI "https://github.com/loft-sh/vcluster/releases/latest" -UseBasicParsing).Content -replace "(?ms).*`"([^`"]*vcluster-windows-amd64.exe)`".*","https://github.com/`$1") -o $Env:APPDATA\vcluster\vcluster.exe;
+Invoke-WebRequest -UseBasicParsing ((Invoke-WebRequest -URI "https://github.com/spectrocloud/vcluster/releases/latest" -UseBasicParsing).Content -replace "(?ms).*`"([^`"]*vcluster-windows-amd64.exe)`".*","https://github.com/`$1") -o $Env:APPDATA\vcluster\vcluster.exe;
 $env:Path += ";" + $Env:APPDATA + "\vcluster";
 [Environment]::SetEnvironmentVariable("Path", $env:Path, [System.EnvironmentVariableTarget]::User);
 ```
@@ -115,7 +115,7 @@ $env:Path += ";" + $Env:APPDATA + "\vcluster";
 
 <br>
 
-Alternatively, you can download the binary for your platform from the [GitHub Releases](https://github.com/loft-sh/vcluster/releases) page and add this binary to your PATH.
+Alternatively, you can download the binary for your platform from the [GitHub Releases](https://github.com/spectrocloud/vcluster/releases) page and add this binary to your PATH.
 
 <br>
 
@@ -155,7 +155,7 @@ Alternatively, you could also delete the host-namespace using kubectl.
 ## Contributing
 
 Thank you for your interest in contributing! Please refer to
-[CONTRIBUTING.md](https://github.com/loft-sh/vcluster/blob/main/CONTRIBUTING.md) for guidance.
+[CONTRIBUTING.md](https://github.com/spectrocloud/vcluster/blob/main/CONTRIBUTING.md) for guidance.
 
 <br>
 

@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/flags"
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/log"
 	"github.com/pkg/errors"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/flags"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/log"
 	"github.com/spf13/cobra"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

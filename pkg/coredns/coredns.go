@@ -7,8 +7,8 @@ import (
 	"path"
 	"text/template"
 
-	"github.com/loft-sh/vcluster/pkg/constants"
-	"github.com/loft-sh/vcluster/pkg/util/applier"
+	"github.com/spectrocloud/vcluster/pkg/constants"
+	"github.com/spectrocloud/vcluster/pkg/util/applier"
 	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/rest"
 )

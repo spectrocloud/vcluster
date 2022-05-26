@@ -1,7 +1,7 @@
 package poddisruptionbudgets
 
 import (
-	"github.com/loft-sh/vcluster/pkg/controllers/syncer/translator"
+	"github.com/spectrocloud/vcluster/pkg/controllers/syncer/translator"
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 )

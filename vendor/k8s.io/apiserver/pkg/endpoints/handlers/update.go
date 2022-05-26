@@ -41,7 +41,6 @@ import (
 	"k8s.io/apiserver/pkg/registry/rest"
 	"k8s.io/apiserver/pkg/util/dryrun"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
-	"k8s.io/klog/v2"
 	utiltrace "k8s.io/utils/trace"
 )
 
@@ -103,30 +102,14 @@ func UpdateResource(r rest.Updater, scope *RequestScope, admit admission.Interfa
 		defaultGVK := scope.Kind
 		original := r.New()
 
-		validationDirective := fieldValidation(options.FieldValidation)
-		decodeSerializer := s.Serializer
-		if validationDirective == metav1.FieldValidationWarn || validationDirective == metav1.FieldValidationStrict {
-			decodeSerializer = s.StrictSerializer
-		}
-
-		decoder := scope.Serializer.DecoderToVersion(decodeSerializer, scope.HubGroupVersion)
 		trace.Step("About to convert to expected version")
+		decoder := scope.Serializer.DecoderToVersion(s.Serializer, scope.HubGroupVersion)
 		obj, gvk, err := decoder.Decode(body, &defaultGVK, original)
 		if err != nil {
-			strictError, isStrictError := runtime.AsStrictDecodingError(err)
-			switch {
-			case isStrictError && obj != nil && validationDirective == metav1.FieldValidationWarn:
-				addStrictDecodingWarnings(req.Context(), strictError.Errors())
-			case isStrictError && validationDirective == metav1.FieldValidationIgnore:
-				klog.Warningf("unexpected strict error when field validation is set to ignore")
-				fallthrough
-			default:
-				err = transformDecodeError(scope.Typer, err, original, gvk, body)
-				scope.err(err, w, req)
-				return
-			}
+			err = transformDecodeError(scope.Typer, err, original, gvk, body)
+			scope.err(err, w, req)
+			return
 		}
-
 		objGV := gvk.GroupVersion()
 		if !scope.AcceptsGroupVersion(objGV) {
 			err = errors.NewBadRequest(fmt.Sprintf("the API version in the data (%s) does not match the expected API version (%s)", objGV, defaultGVK.GroupVersion()))
@@ -135,17 +118,9 @@ func UpdateResource(r rest.Updater, scope *RequestScope, admit admission.Interfa
 		}
 		trace.Step("Conversion done")
 
-		audit.LogRequestObject(req.Context(), obj, objGV, scope.Resource, scope.Subresource, scope.Serializer)
-		admit = admission.WithAudit(admit)
-
-		// if this object supports namespace info
-		if objectMeta, err := meta.Accessor(obj); err == nil {
-			// ensure namespace on the object is correct, or error if a conflicting namespace was set in the object
-			if err := rest.EnsureObjectNamespaceMatchesRequestNamespace(rest.ExpectedNamespaceForResource(namespace, scope.Resource), objectMeta); err != nil {
-				scope.err(err, w, req)
-				return
-			}
-		}
+		ae := request.AuditEventFrom(ctx)
+		audit.LogRequestObject(ae, obj, objGV, scope.Resource, scope.Subresource, scope.Serializer)
+		admit = admission.WithAudit(admit, ae)
 
 		if err := checkName(obj, name, namespace, scope.Namer); err != nil {
 			scope.err(err, w, req)
@@ -249,8 +224,6 @@ func UpdateResource(r rest.Updater, scope *RequestScope, admit admission.Interfa
 			status = http.StatusCreated
 		}
 
-		trace.Step("About to write a response")
-		defer trace.Step("Writing http response done")
 		transformResponseObject(ctx, scope, trace, req, w, status, outputMediaType, result)
 	}
 }
@@ -293,9 +266,8 @@ func updateToCreateOptions(uo *metav1.UpdateOptions) *metav1.CreateOptions {
 		return nil
 	}
 	co := &metav1.CreateOptions{
-		DryRun:          uo.DryRun,
-		FieldManager:    uo.FieldManager,
-		FieldValidation: uo.FieldValidation,
+		DryRun:       uo.DryRun,
+		FieldManager: uo.FieldManager,
 	}
 	co.TypeMeta.SetGroupVersionKind(metav1.SchemeGroupVersion.WithKind("CreateOptions"))
 	return co

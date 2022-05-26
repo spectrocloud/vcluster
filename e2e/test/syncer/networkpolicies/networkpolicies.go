@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/loft-sh/vcluster/e2e/framework"
-	"github.com/loft-sh/vcluster/pkg/util/random"
 	"github.com/onsi/ginkgo"
+	"github.com/spectrocloud/vcluster/e2e/framework"
+	"github.com/spectrocloud/vcluster/pkg/util/random"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

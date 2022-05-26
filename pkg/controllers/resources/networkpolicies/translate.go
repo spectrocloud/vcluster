@@ -1,9 +1,9 @@
 package networkpolicies
 
 import (
-	podstranslate "github.com/loft-sh/vcluster/pkg/controllers/resources/pods/translate"
-	"github.com/loft-sh/vcluster/pkg/controllers/syncer/translator"
-	"github.com/loft-sh/vcluster/pkg/util/translate"
+	podstranslate "github.com/spectrocloud/vcluster/pkg/controllers/resources/pods/translate"
+	"github.com/spectrocloud/vcluster/pkg/controllers/syncer/translator"
+	"github.com/spectrocloud/vcluster/pkg/util/translate"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 )

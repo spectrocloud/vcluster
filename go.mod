@@ -1,4 +1,4 @@
-module github.com/loft-sh/vcluster
+module github.com/spectrocloud/vcluster
 
 go 1.18
 
@@ -48,6 +48,7 @@ require (
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/fatih/camelcase v1.0.0 // indirect
 	github.com/google/gnostic v0.5.7-v3refs // indirect
+	github.com/googleapis/gnostic v0.5.5 // indirect
 )
 
 require (
@@ -167,9 +168,29 @@ require (
 	k8s.io/component-base v0.24.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20220328201542-3ee0da9b0b42 // indirect
 	sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.0.30 // indirect
-	sigs.k8s.io/json v0.0.0-20211208200746-9f7c6b3444d2 // indirect
 	sigs.k8s.io/kustomize/api v0.11.4 // indirect
 	sigs.k8s.io/kustomize/kyaml v0.13.6 // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.2.1 // indirect
 	sigs.k8s.io/yaml v1.3.0 // indirect
+)
+
+replace (
+	github.com/go-logr/logr => github.com/go-logr/logr v0.4.0
+	github.com/go-openapi/spec => github.com/go-openapi/spec v0.19.5
+	github.com/onsi/ginkgo => github.com/onsi/ginkgo v1.16.4
+	github.com/onsi/gomega => github.com/onsi/gomega v1.16.0
+	golang.org/x/net => golang.org/x/net v0.0.0-20210813160813-60bc85c4be6d
+	golang.org/x/oauth2 => golang.org/x/oauth2 v0.0.0-20210805134026-6f1e6394065a
+	k8s.io/api => k8s.io/api v0.22.2
+	k8s.io/apiextensions-apiserver => k8s.io/apiextensions-apiserver v0.22.2
+	k8s.io/apimachinery => k8s.io/apimachinery v0.22.2
+	k8s.io/apiserver => k8s.io/apiserver v0.22.2
+	k8s.io/client-go => k8s.io/client-go v0.22.2
+	k8s.io/klog/v2 => k8s.io/klog/v2 v2.10.0
+	k8s.io/kube-aggregator => k8s.io/kube-aggregator v0.22.2
+	k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20210421082810-95288971da7e
+	k8s.io/utils => k8s.io/utils v0.0.0-20210820185131-d34e5cb4466e
+	sigs.k8s.io/cluster-api => sigs.k8s.io/cluster-api v1.0.0
+	sigs.k8s.io/controller-runtime => sigs.k8s.io/controller-runtime v0.10.2
+	sigs.k8s.io/yaml => sigs.k8s.io/yaml v1.2.0
 )

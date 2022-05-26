@@ -1,7 +1,7 @@
 package upgrade
 
 import (
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/log"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/log"
 	"io/ioutil"
 	"os"
 	"strings"

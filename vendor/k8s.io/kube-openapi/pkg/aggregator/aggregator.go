@@ -24,7 +24,6 @@ import (
 
 	"k8s.io/kube-openapi/pkg/validation/spec"
 
-	"k8s.io/kube-openapi/pkg/schemamutation"
 	"k8s.io/kube-openapi/pkg/util"
 )
 
@@ -114,7 +113,7 @@ func renameDefinition(s *spec.Swagger, renames map[string]string) *spec.Swagger 
 	ret := &spec.Swagger{}
 	*ret = *s
 
-	ret = schemamutation.ReplaceReferences(func(ref *spec.Ref) *spec.Ref {
+	ret = replaceReferences(func(ref *spec.Ref) *spec.Ref {
 		refName := ref.String()
 		if newRef, found := refRenames[refName]; found {
 			ret := spec.MustCreateRef(newRef)

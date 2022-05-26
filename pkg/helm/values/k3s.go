@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/loft-sh/vcluster/pkg/helm"
-	"github.com/loft-sh/vcluster/pkg/log"
+	"github.com/spectrocloud/vcluster/pkg/helm"
+	"github.com/spectrocloud/vcluster/pkg/log"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/version"

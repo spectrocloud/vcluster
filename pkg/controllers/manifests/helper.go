@@ -2,8 +2,9 @@ package manifests
 
 import (
 	"context"
+
 	"github.com/ghodss/yaml"
-	"github.com/loft-sh/vcluster/pkg/util/applier"
+	"github.com/spectrocloud/vcluster/pkg/util/applier"
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/rest"

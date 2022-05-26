@@ -6,7 +6,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/log/survey"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/log/survey"
 
 	goansi "github.com/k0kubun/go-ansi"
 	"github.com/mgutz/ansi"

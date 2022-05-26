@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/log"
-	"github.com/loft-sh/vcluster/e2e/framework"
 	"github.com/onsi/ginkgo"
 	"github.com/onsi/gomega"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/log"
+	"github.com/spectrocloud/vcluster/e2e/framework"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsv1beta1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -21,15 +21,15 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	// Register tests
-	_ "github.com/loft-sh/vcluster/e2e/test/coredns"
-	_ "github.com/loft-sh/vcluster/e2e/test/k8sdefaultendpoint"
-	_ "github.com/loft-sh/vcluster/e2e/test/servicesync"
-	_ "github.com/loft-sh/vcluster/e2e/test/manifests"
-	_ "github.com/loft-sh/vcluster/e2e/test/syncer/networkpolicies"
-	_ "github.com/loft-sh/vcluster/e2e/test/syncer/pods"
-	_ "github.com/loft-sh/vcluster/e2e/test/syncer/pvc"
-	_ "github.com/loft-sh/vcluster/e2e/test/syncer/services"
-	_ "github.com/loft-sh/vcluster/e2e/test/webhook"
+	_ "github.com/spectrocloud/vcluster/e2e/test/coredns"
+	_ "github.com/spectrocloud/vcluster/e2e/test/k8sdefaultendpoint"
+	_ "github.com/spectrocloud/vcluster/e2e/test/manifests"
+	_ "github.com/spectrocloud/vcluster/e2e/test/servicesync"
+	_ "github.com/spectrocloud/vcluster/e2e/test/syncer/networkpolicies"
+	_ "github.com/spectrocloud/vcluster/e2e/test/syncer/pods"
+	_ "github.com/spectrocloud/vcluster/e2e/test/syncer/pvc"
+	_ "github.com/spectrocloud/vcluster/e2e/test/syncer/services"
+	_ "github.com/spectrocloud/vcluster/e2e/test/webhook"
 )
 
 var (

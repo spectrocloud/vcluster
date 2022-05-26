@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/log"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/log"
 	"k8s.io/client-go/tools/clientcmd"
 	uexec "k8s.io/utils/exec"
 )

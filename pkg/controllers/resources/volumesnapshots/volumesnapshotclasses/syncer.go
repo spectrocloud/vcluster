@@ -3,13 +3,13 @@ package volumesnapshotclasses
 import (
 	"path"
 
-	"github.com/loft-sh/vcluster/pkg/constants"
-	"github.com/loft-sh/vcluster/pkg/controllers/syncer"
-	"github.com/loft-sh/vcluster/pkg/controllers/syncer/translator"
-	"github.com/loft-sh/vcluster/pkg/util"
+	"github.com/spectrocloud/vcluster/pkg/constants"
+	"github.com/spectrocloud/vcluster/pkg/controllers/syncer"
+	"github.com/spectrocloud/vcluster/pkg/controllers/syncer/translator"
+	"github.com/spectrocloud/vcluster/pkg/util"
 
 	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1"
-	synccontext "github.com/loft-sh/vcluster/pkg/controllers/syncer/context"
+	synccontext "github.com/spectrocloud/vcluster/pkg/controllers/syncer/context"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )

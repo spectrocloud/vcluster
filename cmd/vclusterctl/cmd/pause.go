@@ -3,15 +3,16 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"time"
+
 	"github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"strconv"
-	"time"
 
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/flags"
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/log"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/flags"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/log"
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"

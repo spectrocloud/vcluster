@@ -3,8 +3,8 @@ package kubeletauthorizer
 import (
 	"context"
 
-	"github.com/loft-sh/vcluster/pkg/server/filters"
-	"github.com/loft-sh/vcluster/pkg/util/clienthelper"
+	"github.com/spectrocloud/vcluster/pkg/server/filters"
+	"github.com/spectrocloud/vcluster/pkg/util/clienthelper"
 	authv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

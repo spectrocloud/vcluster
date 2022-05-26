@@ -1,11 +1,11 @@
 package cmd
 
 import (
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/cmd/get"
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/flags"
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/log"
-	"github.com/loft-sh/vcluster/pkg/upgrade"
 	"github.com/sirupsen/logrus"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/cmd/get"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/flags"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/log"
+	"github.com/spectrocloud/vcluster/pkg/upgrade"
 	"github.com/spf13/cobra"
 )
 

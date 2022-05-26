@@ -1,7 +1,7 @@
 package legacy
 
 import (
-	"github.com/loft-sh/vcluster/pkg/util/translate"
+	"github.com/spectrocloud/vcluster/pkg/util/translate"
 	networkingv1beta1 "k8s.io/api/networking/v1beta1"
 	"k8s.io/apimachinery/pkg/api/equality"
 )

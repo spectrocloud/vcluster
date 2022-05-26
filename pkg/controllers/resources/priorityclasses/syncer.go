@@ -1,11 +1,11 @@
 package priorityclasses
 
 import (
-	"github.com/loft-sh/vcluster/pkg/constants"
-	"github.com/loft-sh/vcluster/pkg/controllers/syncer"
-	synccontext "github.com/loft-sh/vcluster/pkg/controllers/syncer/context"
-	"github.com/loft-sh/vcluster/pkg/controllers/syncer/translator"
-	"github.com/loft-sh/vcluster/pkg/util/translate"
+	"github.com/spectrocloud/vcluster/pkg/constants"
+	"github.com/spectrocloud/vcluster/pkg/controllers/syncer"
+	synccontext "github.com/spectrocloud/vcluster/pkg/controllers/syncer/context"
+	"github.com/spectrocloud/vcluster/pkg/controllers/syncer/translator"
+	"github.com/spectrocloud/vcluster/pkg/util/translate"
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"

@@ -3,7 +3,7 @@ package translator
 import (
 	"strings"
 
-	"github.com/loft-sh/vcluster/pkg/util/translate"
+	"github.com/spectrocloud/vcluster/pkg/util/translate"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

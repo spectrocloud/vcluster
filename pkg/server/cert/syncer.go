@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	ctrlcontext "github.com/loft-sh/vcluster/cmd/vcluster/context"
-	"github.com/loft-sh/vcluster/pkg/controllers/resources/nodes/nodeservice"
-	"github.com/loft-sh/vcluster/pkg/util/translate"
+	ctrlcontext "github.com/spectrocloud/vcluster/cmd/vcluster/context"
+	"github.com/spectrocloud/vcluster/pkg/controllers/resources/nodes/nodeservice"
+	"github.com/spectrocloud/vcluster/pkg/util/translate"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"

@@ -50,11 +50,11 @@ Only resources that influence the workloads need to be synced, for example, pods
 If you want to start developing your own vcluster plugins, it is recommended that you read about [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime) as well as [kube builder](https://book.kubebuilder.io/introduction.html) that uses the controller runtime internally.
 :::
 
-vcluster provides an [SDK](https://github.com/loft-sh/vcluster-sdk) for writing plugin controllers that abstracts a lot of the syncer complexity away from the user, but still gives you access to the underlying structures if you need it.
+vcluster provides an [SDK](https://github.com/spectrocloud/vcluster-sdk) for writing plugin controllers that abstracts a lot of the syncer complexity away from the user, but still gives you access to the underlying structures if you need it.
 Internally, the vcluster SDK uses the popular [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime) project, that is used by vcluster itself to create the controllers.
 The vcluster SDK lets you write custom plugin controllers with just a few lines of code.
 
-Since the plugin SDK interfaces are mostly compatible with the vcluster syncers, you can also take a look at how those are implemented in [the vcluster itself](https://github.com/loft-sh/vcluster/tree/main/pkg/controllers/resources), which work in most cases the same way as if those would be implemented in a plugin.
+Since the plugin SDK interfaces are mostly compatible with the vcluster syncers, you can also take a look at how those are implemented in [the vcluster itself](https://github.com/spectrocloud/vcluster/tree/main/pkg/controllers/resources), which work in most cases the same way as if those would be implemented in a plugin.
 It would be even possible to reimplement all vcluster syncers in a separate plugin.
 
 ## Loading and Installing Plugins to vcluster
@@ -97,7 +97,7 @@ helm install my-vcluster vcluster -n my-vcluster --repo https://charts.loft.sh -
 ```
 
 :::info Examples
-You can take a look at the [vcluster-sdk repo](https://github.com/loft-sh/vcluster-sdk/tree/main/examples) for some working examples.
+You can take a look at the [vcluster-sdk repo](https://github.com/spectrocloud/vcluster-sdk/tree/main/examples) for some working examples.
 :::
 
 :::warning Don't install untrusted plugins

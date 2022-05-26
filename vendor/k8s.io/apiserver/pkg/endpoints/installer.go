@@ -19,6 +19,7 @@ package endpoints
 import (
 	"fmt"
 	"net/http"
+	gpath "path"
 	"reflect"
 	"sort"
 	"strings"
@@ -216,7 +217,7 @@ func (a *APIInstaller) registerResourceHandlers(path string, storage rest.Storag
 	isSubresource := len(subresource) > 0
 
 	// If there is a subresource, namespace scoping is defined by the parent resource
-	var namespaceScoped bool
+	namespaceScoped := true
 	if isSubresource {
 		parentStorage, ok := a.group.Storage[resource]
 		if !ok {
@@ -427,8 +428,10 @@ func (a *APIInstaller) registerResourceHandlers(path string, storage rest.Storag
 		apiResource.Namespaced = false
 		apiResource.Kind = resourceKind
 		namer := handlers.ContextBasedNaming{
-			Namer:         a.group.Namer,
-			ClusterScoped: true,
+			SelfLinker:         a.group.Linker,
+			ClusterScoped:      true,
+			SelfLinkPathPrefix: gpath.Join(a.prefix, resource) + "/",
+			SelfLinkPathSuffix: suffix,
 		}
 
 		// Handler for standard REST verbs (GET, PUT, POST and DELETE).
@@ -474,8 +477,10 @@ func (a *APIInstaller) registerResourceHandlers(path string, storage rest.Storag
 		apiResource.Namespaced = true
 		apiResource.Kind = resourceKind
 		namer := handlers.ContextBasedNaming{
-			Namer:         a.group.Namer,
-			ClusterScoped: false,
+			SelfLinker:         a.group.Linker,
+			ClusterScoped:      false,
+			SelfLinkPathPrefix: gpath.Join(a.prefix, namespaceParamName) + "/",
+			SelfLinkPathSuffix: itemPathSuffix,
 		}
 
 		actions = appendIf(actions, action{"LIST", resourcePath, resourceParams, namer, false}, isLister)
@@ -534,11 +539,6 @@ func (a *APIInstaller) registerResourceHandlers(path string, storage rest.Storag
 
 			DirectlyDecodableVersions: decodableVersions,
 		}
-	}
-
-	var disabledParams []string
-	if !utilfeature.DefaultFeatureGate.Enabled(features.ServerSideFieldValidation) {
-		disabledParams = []string{"fieldValidation"}
 	}
 
 	// Create Routes for the actions.
@@ -771,7 +771,7 @@ func (a *APIInstaller) registerResourceHandlers(path string, storage rest.Storag
 				Returns(http.StatusCreated, "Created", producedObject).
 				Reads(defaultVersionedObject).
 				Writes(producedObject)
-			if err := AddObjectParams(ws, route, versionedUpdateOptions, disabledParams...); err != nil {
+			if err := AddObjectParams(ws, route, versionedUpdateOptions); err != nil {
 				return nil, nil, err
 			}
 			addParams(route, action.Params)
@@ -802,7 +802,7 @@ func (a *APIInstaller) registerResourceHandlers(path string, storage rest.Storag
 				Returns(http.StatusCreated, "Created", producedObject).
 				Reads(metav1.Patch{}).
 				Writes(producedObject)
-			if err := AddObjectParams(ws, route, versionedPatchOptions, disabledParams...); err != nil {
+			if err := AddObjectParams(ws, route, versionedPatchOptions); err != nil {
 				return nil, nil, err
 			}
 			addParams(route, action.Params)
@@ -833,7 +833,7 @@ func (a *APIInstaller) registerResourceHandlers(path string, storage rest.Storag
 				Returns(http.StatusAccepted, "Accepted", producedObject).
 				Reads(defaultVersionedObject).
 				Writes(producedObject)
-			if err := AddObjectParams(ws, route, versionedCreateOptions, disabledParams...); err != nil {
+			if err := AddObjectParams(ws, route, versionedCreateOptions); err != nil {
 				return nil, nil, err
 			}
 			addParams(route, action.Params)

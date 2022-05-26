@@ -2,10 +2,10 @@ package servicesync
 
 import (
 	"context"
-	"github.com/loft-sh/vcluster/e2e/framework"
-	"github.com/loft-sh/vcluster/pkg/controllers/syncer/translator"
-	"github.com/loft-sh/vcluster/pkg/util/translate"
 	"github.com/onsi/ginkgo"
+	"github.com/spectrocloud/vcluster/e2e/framework"
+	"github.com/spectrocloud/vcluster/pkg/controllers/syncer/translator"
+	"github.com/spectrocloud/vcluster/pkg/util/translate"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"

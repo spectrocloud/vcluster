@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/log"
 	"github.com/pkg/errors"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/log"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )

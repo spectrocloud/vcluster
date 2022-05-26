@@ -3,9 +3,9 @@ package get
 import (
 	"fmt"
 
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/flags"
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/log"
-	"github.com/loft-sh/vcluster/pkg/helm/values"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/flags"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/log"
+	"github.com/spectrocloud/vcluster/pkg/helm/values"
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"

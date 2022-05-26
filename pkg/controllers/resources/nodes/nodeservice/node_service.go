@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/loft-sh/vcluster/pkg/util/translate"
 	"github.com/pkg/errors"
+	"github.com/spectrocloud/vcluster/pkg/util/translate"
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

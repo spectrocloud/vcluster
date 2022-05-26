@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/loft-sh/vcluster/pkg/util/loghelper"
+	"github.com/spectrocloud/vcluster/pkg/util/loghelper"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"

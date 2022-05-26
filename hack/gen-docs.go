@@ -1,3 +1,4 @@
+//go:build ignore
 // +build ignore
 
 package main
@@ -12,8 +13,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/cmd"
-	"github.com/loft-sh/vcluster/pkg/util/loghelper"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/cmd"
+	"github.com/spectrocloud/vcluster/pkg/util/loghelper"
 	"github.com/spf13/cobra/doc"
 )
 

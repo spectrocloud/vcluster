@@ -2,12 +2,12 @@ package nodes
 
 import (
 	"context"
-	"github.com/loft-sh/vcluster/pkg/constants"
-	"github.com/loft-sh/vcluster/pkg/controllers/resources/nodes/nodeservice"
-	"github.com/loft-sh/vcluster/pkg/controllers/syncer"
-	synccontext "github.com/loft-sh/vcluster/pkg/controllers/syncer/context"
-	"github.com/loft-sh/vcluster/pkg/util/translate"
 	"github.com/pkg/errors"
+	"github.com/spectrocloud/vcluster/pkg/constants"
+	"github.com/spectrocloud/vcluster/pkg/controllers/resources/nodes/nodeservice"
+	"github.com/spectrocloud/vcluster/pkg/controllers/syncer"
+	synccontext "github.com/spectrocloud/vcluster/pkg/controllers/syncer/context"
+	"github.com/spectrocloud/vcluster/pkg/util/translate"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"

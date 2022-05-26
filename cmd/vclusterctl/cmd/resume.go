@@ -3,15 +3,16 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/flags"
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/log"
+	"strconv"
+
 	"github.com/pkg/errors"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/flags"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/log"
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"strconv"
 )
 
 // ResumeCmd holds the cmd flags

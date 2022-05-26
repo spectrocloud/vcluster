@@ -6,8 +6,8 @@ import (
 	"regexp"
 	"sync"
 
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/log"
 	"github.com/pkg/errors"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/log"
 	"k8s.io/klog"
 
 	"github.com/blang/semver"

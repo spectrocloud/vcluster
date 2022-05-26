@@ -1,8 +1,8 @@
 package values
 
 import (
-	"github.com/loft-sh/vcluster/pkg/helm"
-	"github.com/loft-sh/vcluster/pkg/log"
+	"github.com/spectrocloud/vcluster/pkg/helm"
+	"github.com/spectrocloud/vcluster/pkg/log"
 )
 
 func GetDefaultReleaseValues(chartOptions *helm.ChartOptions, log log.Logger) (string, error) {

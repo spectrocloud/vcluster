@@ -2,12 +2,12 @@ package main
 
 import (
 	"fmt"
-	"github.com/loft-sh/vcluster/pkg/constants"
+	"github.com/spectrocloud/vcluster/pkg/constants"
 	"os"
 	"strings"
 
-	"github.com/loft-sh/vcluster/pkg/controllers/resources/pods/translate"
-	"github.com/loft-sh/vcluster/pkg/helm/values"
+	"github.com/spectrocloud/vcluster/pkg/controllers/resources/pods/translate"
+	"github.com/spectrocloud/vcluster/pkg/helm/values"
 )
 
 func main() {

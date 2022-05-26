@@ -2,14 +2,14 @@ package manifests
 
 import (
 	"context"
-	"github.com/loft-sh/vcluster/pkg/util/compress"
-	"github.com/loft-sh/vcluster/pkg/util/translate"
+	"github.com/spectrocloud/vcluster/pkg/util/compress"
+	"github.com/spectrocloud/vcluster/pkg/util/translate"
 	"sort"
 	"strings"
 
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 
-	"github.com/loft-sh/vcluster/pkg/util/loghelper"
+	"github.com/spectrocloud/vcluster/pkg/util/loghelper"
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"

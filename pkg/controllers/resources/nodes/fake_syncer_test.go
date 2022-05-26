@@ -2,17 +2,18 @@ package nodes
 
 import (
 	"context"
-	"github.com/loft-sh/vcluster/pkg/controllers/syncer"
-	synccontext "github.com/loft-sh/vcluster/pkg/controllers/syncer/context"
-	"gotest.tools/assert"
 	"testing"
 
-	"github.com/loft-sh/vcluster/pkg/controllers/resources/nodes/nodeservice"
+	"github.com/spectrocloud/vcluster/pkg/controllers/syncer"
+	synccontext "github.com/spectrocloud/vcluster/pkg/controllers/syncer/context"
+	"gotest.tools/assert"
+
+	"github.com/spectrocloud/vcluster/pkg/controllers/resources/nodes/nodeservice"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/loft-sh/vcluster/pkg/constants"
-	generictesting "github.com/loft-sh/vcluster/pkg/controllers/syncer/testing"
+	"github.com/spectrocloud/vcluster/pkg/constants"
+	generictesting "github.com/spectrocloud/vcluster/pkg/controllers/syncer/testing"
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/resource"

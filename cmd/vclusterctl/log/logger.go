@@ -1,8 +1,8 @@
 package log
 
 import (
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/log/survey"
 	"github.com/sirupsen/logrus"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/log/survey"
 )
 
 // Level type

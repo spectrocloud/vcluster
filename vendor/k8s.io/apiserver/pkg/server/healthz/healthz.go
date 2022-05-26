@@ -255,8 +255,7 @@ func handleRootHealth(name string, firstTimeHealthy func(), checks ...HealthChec
 		// always be verbose on failure
 		if len(failedChecks) > 0 {
 			klog.V(2).Infof("%s check failed: %s\n%v", strings.Join(failedChecks, ","), name, failedVerboseLogOutput.String())
-			httplog.SetStacktracePredicate(r.Context(), func(int) bool { return false })
-			http.Error(w, fmt.Sprintf("%s%s check failed", individualCheckOutput.String(), name), http.StatusInternalServerError)
+			http.Error(httplog.Unlogged(r, w), fmt.Sprintf("%s%s check failed", individualCheckOutput.String(), name), http.StatusInternalServerError)
 			return
 		}
 

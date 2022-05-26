@@ -2,14 +2,14 @@ package testing
 
 import (
 	"context"
-	"github.com/loft-sh/vcluster/pkg/util/log"
-	"github.com/loft-sh/vcluster/pkg/util/loghelper"
+	"github.com/spectrocloud/vcluster/pkg/util/log"
+	"github.com/spectrocloud/vcluster/pkg/util/loghelper"
 	"testing"
 
-	controllercontext "github.com/loft-sh/vcluster/cmd/vcluster/context"
-	"github.com/loft-sh/vcluster/pkg/controllers/syncer"
-	synccontext "github.com/loft-sh/vcluster/pkg/controllers/syncer/context"
-	testingutil "github.com/loft-sh/vcluster/pkg/util/testing"
+	controllercontext "github.com/spectrocloud/vcluster/cmd/vcluster/context"
+	"github.com/spectrocloud/vcluster/pkg/controllers/syncer"
+	synccontext "github.com/spectrocloud/vcluster/pkg/controllers/syncer/context"
+	testingutil "github.com/spectrocloud/vcluster/pkg/util/testing"
 	"gotest.tools/assert"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"

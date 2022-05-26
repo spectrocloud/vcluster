@@ -7,10 +7,10 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/loft-sh/vcluster/e2e/framework"
-	"github.com/loft-sh/vcluster/pkg/util/random"
-	"github.com/loft-sh/vcluster/pkg/util/translate"
 	"github.com/onsi/ginkgo"
+	"github.com/spectrocloud/vcluster/e2e/framework"
+	"github.com/spectrocloud/vcluster/pkg/util/random"
+	"github.com/spectrocloud/vcluster/pkg/util/translate"
 )
 
 const (

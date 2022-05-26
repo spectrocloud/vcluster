@@ -3,7 +3,7 @@ package portforward
 import (
 	"context"
 	"fmt"
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/log"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/log"
 	"io"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

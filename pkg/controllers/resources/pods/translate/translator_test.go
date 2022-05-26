@@ -1,11 +1,12 @@
 package translate
 
 import (
-	translator2 "github.com/loft-sh/vcluster/pkg/controllers/syncer/translator"
 	"testing"
 
-	"github.com/loft-sh/vcluster/pkg/util/loghelper"
-	"github.com/loft-sh/vcluster/pkg/util/translate"
+	translator2 "github.com/spectrocloud/vcluster/pkg/controllers/syncer/translator"
+
+	"github.com/spectrocloud/vcluster/pkg/util/loghelper"
+	"github.com/spectrocloud/vcluster/pkg/util/translate"
 	"gotest.tools/assert"
 	"gotest.tools/assert/cmp"
 	corev1 "k8s.io/api/core/v1"

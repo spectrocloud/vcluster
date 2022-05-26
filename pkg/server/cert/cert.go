@@ -7,7 +7,7 @@ import (
 	"io/ioutil"
 	"net"
 
-	"github.com/loft-sh/vcluster/pkg/util/certhelper"
+	"github.com/spectrocloud/vcluster/pkg/util/certhelper"
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 

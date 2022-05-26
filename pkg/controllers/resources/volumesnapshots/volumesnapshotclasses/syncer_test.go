@@ -1,12 +1,12 @@
 package volumesnapshotclasses
 
 import (
-	synccontext "github.com/loft-sh/vcluster/pkg/controllers/syncer/context"
+	synccontext "github.com/spectrocloud/vcluster/pkg/controllers/syncer/context"
 	"gotest.tools/assert"
 	"testing"
 
 	volumesnapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1"
-	generictesting "github.com/loft-sh/vcluster/pkg/controllers/syncer/testing"
+	generictesting "github.com/spectrocloud/vcluster/pkg/controllers/syncer/testing"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"

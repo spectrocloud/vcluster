@@ -44,7 +44,7 @@ module.exports = {
           position: 'right',
         },
         {
-          href: 'https://github.com/loft-sh/vcluster',
+          href: 'https://github.com/spectrocloud/vcluster',
           className: 'github-link',
           'aria-label': 'GitHub',
           position: 'right',
@@ -72,7 +72,7 @@ module.exports = {
           routeBasePath: '/',
           sidebarPath: require.resolve('./sidebars.js'),
           editUrl:
-            'https://github.com/loft-sh/vcluster/edit/main/docs/',
+            'https://github.com/spectrocloud/vcluster/edit/main/docs/',
         },
         theme: {
           customCss: require.resolve('./src/css/custom.css'),

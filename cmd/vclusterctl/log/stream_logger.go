@@ -7,7 +7,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/log/survey"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/log/survey"
 
 	"github.com/sirupsen/logrus"
 )

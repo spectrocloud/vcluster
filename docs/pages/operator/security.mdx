@@ -32,7 +32,7 @@ This feature imposes a couple of restrictions on vcluster workloads to make sure
 2. vcluster deploys a [resource quota](https://kubernetes.io/docs/concepts/policy/resource-quotas/) as well as a [limit range](https://kubernetes.io/docs/concepts/policy/limit-range/) alongside the vcluster itself. This allows restricting resource consumption of vcluster workloads. If enabled, sane defaults for those 2 resources are chosen.
 3. vcluster deploys a [network policy](https://kubernetes.io/docs/concepts/services-networking/network-policies/) alongside itself that will restrict access of vcluster workloads as well as the vcluster control plane to other pods in the host cluster. (only works if your host [cluster CNI supports network policies](https://kubernetes.io/docs/concepts/services-networking/network-policies/#prerequisites))
 
-You can adjust isolation settings through helm values. The default values are (also check [values.yaml](https://github.com/loft-sh/vcluster/blob/v0.7.0-alpha.1/charts/k3s/values.yaml)):
+You can adjust isolation settings through helm values. The default values are (also check [values.yaml](https://github.com/spectrocloud/vcluster/blob/v0.7.0-alpha.1/charts/k3s/values.yaml)):
 ```yaml
 isolation:
   enabled: false

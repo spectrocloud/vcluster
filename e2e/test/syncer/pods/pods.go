@@ -2,16 +2,16 @@ package pods
 
 import (
 	"fmt"
-	"github.com/loft-sh/vcluster/pkg/controllers/syncer/translator"
+	"github.com/spectrocloud/vcluster/pkg/controllers/syncer/translator"
 	"strings"
 	"time"
 
-	"github.com/loft-sh/vcluster/e2e/framework"
-	podtranslate "github.com/loft-sh/vcluster/pkg/controllers/resources/pods/translate"
-	"github.com/loft-sh/vcluster/pkg/util/podhelper"
-	"github.com/loft-sh/vcluster/pkg/util/random"
-	"github.com/loft-sh/vcluster/pkg/util/translate"
 	"github.com/onsi/ginkgo"
+	"github.com/spectrocloud/vcluster/e2e/framework"
+	podtranslate "github.com/spectrocloud/vcluster/pkg/controllers/resources/pods/translate"
+	"github.com/spectrocloud/vcluster/pkg/util/podhelper"
+	"github.com/spectrocloud/vcluster/pkg/util/random"
+	"github.com/spectrocloud/vcluster/pkg/util/translate"
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

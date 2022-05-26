@@ -1,14 +1,15 @@
 package persistentvolumes
 
 import (
-	synccontext "github.com/loft-sh/vcluster/pkg/controllers/syncer/context"
-	"gotest.tools/assert"
 	"testing"
+
+	synccontext "github.com/spectrocloud/vcluster/pkg/controllers/syncer/context"
+	"gotest.tools/assert"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/loft-sh/vcluster/pkg/constants"
-	generictesting "github.com/loft-sh/vcluster/pkg/controllers/syncer/testing"
+	"github.com/spectrocloud/vcluster/pkg/constants"
+	generictesting "github.com/spectrocloud/vcluster/pkg/controllers/syncer/testing"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"

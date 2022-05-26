@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/loft-sh/vcluster/cmd/vcluster/cmd"
-	"github.com/loft-sh/vcluster/pkg/util/log"
+	"github.com/spectrocloud/vcluster/cmd/vcluster/cmd"
+	"github.com/spectrocloud/vcluster/pkg/util/log"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	"k8s.io/klog"
 	"os"

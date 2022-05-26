@@ -1,10 +1,12 @@
 package events
 
 import (
-	"github.com/loft-sh/vcluster/pkg/constants"
-	synccontext "github.com/loft-sh/vcluster/pkg/controllers/syncer/context"
-	generictesting "github.com/loft-sh/vcluster/pkg/controllers/syncer/testing"
-	"github.com/loft-sh/vcluster/pkg/util/translate"
+	"testing"
+
+	"github.com/spectrocloud/vcluster/pkg/constants"
+	synccontext "github.com/spectrocloud/vcluster/pkg/controllers/syncer/context"
+	generictesting "github.com/spectrocloud/vcluster/pkg/controllers/syncer/testing"
+	"github.com/spectrocloud/vcluster/pkg/util/translate"
 	"gotest.tools/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -13,7 +15,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"testing"
 )
 
 var targetNamespace = "p-test"

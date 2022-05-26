@@ -3,8 +3,8 @@ package context
 import (
 	"context"
 
-	controllercontext "github.com/loft-sh/vcluster/cmd/vcluster/context"
-	"github.com/loft-sh/vcluster/pkg/util/loghelper"
+	controllercontext "github.com/spectrocloud/vcluster/cmd/vcluster/context"
+	"github.com/spectrocloud/vcluster/pkg/util/loghelper"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )

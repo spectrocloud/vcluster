@@ -6,7 +6,7 @@ import (
 	"time"
 
 	lru "github.com/hashicorp/golang-lru"
-	"github.com/loft-sh/vcluster/pkg/util/clienthelper"
+	"github.com/spectrocloud/vcluster/pkg/util/clienthelper"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/apiserver/pkg/authentication/request/bearertoken"

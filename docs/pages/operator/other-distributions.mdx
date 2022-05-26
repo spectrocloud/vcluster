@@ -29,7 +29,7 @@ kubectl get ns
 ...
 ```
 
-Behind the scenes a different helm chart will be deployed (`vcluster-k0s`), that holds specific configuration to support k0s. Check the [github repository](https://github.com/loft-sh/vcluster/tree/main/charts/k0s) for all available chart options.
+Behind the scenes a different helm chart will be deployed (`vcluster-k0s`), that holds specific configuration to support k0s. Check the [github repository](https://github.com/spectrocloud/vcluster/tree/main/charts/k0s) for all available chart options.
 
 ## Vanilla k8s
 
@@ -51,7 +51,7 @@ kubectl get ns
 ...
 ```
 
-Behind the scenes a different helm chart will be deployed (`vcluster-k8s`), that holds specific configuration to support vanilla k8s. Check the [github repository](https://github.com/loft-sh/vcluster/tree/main/charts/k8s) for all available chart options.
+Behind the scenes a different helm chart will be deployed (`vcluster-k8s`), that holds specific configuration to support vanilla k8s. Check the [github repository](https://github.com/spectrocloud/vcluster/tree/main/charts/k8s) for all available chart options.
 
 ### High Available Vanilla k8s
 
@@ -80,12 +80,12 @@ And then deploy vcluster with:
 vcluster create my-vcluster -n test --distro k8s -f values.yaml
 ```
 
-If you want to create a separate chart for the Kubernetes distribution, a good starting point is to copy one of [our distro charts](https://github.com/loft-sh/vcluster/tree/main/charts) and then modifying it to work with your distribution.
+If you want to create a separate chart for the Kubernetes distribution, a good starting point is to copy one of [our distro charts](https://github.com/spectrocloud/vcluster/tree/main/charts) and then modifying it to work with your distribution.
 vcluster only needs the following information from the virtual Kubernetes distribution to function properly:
 1. The api server central authority certificate (usually found at `/pki/ca.crt`)
 2. The api server central authority key (usually found at `/pki/ca.key`)
 3. An admin kube config to contact the virtual Kubernetes control plane (usually found at `/pki/admin.conf`)
 
-For multi binary distributions, vcluster can even create those with a pre-install hook as found in the [k8s chart](https://github.com/loft-sh/vcluster/tree/main/charts/k8s/templates).
+For multi binary distributions, vcluster can even create those with a pre-install hook as found in the [k8s chart](https://github.com/spectrocloud/vcluster/tree/main/charts/k8s/templates).
 
 In general, if you need vcluster to support another Kubernetes distribution, we are always happy to help you or accept a pull request in our github repository.

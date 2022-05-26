@@ -3,7 +3,7 @@ title: "Development tutorial"
 sidebar_label: "Development tutorial"
 ---
 
-In this tutorial we will implement a ConfigMap syncer. Vcluster syncs ConfigMaps out of the box, but only those that are used by one of the pods created in vcluster. Here we will have a step-by-step look at a plugin implementation that will synchronize all ConfigMaps using the [vcluster plugin SDK](https://github.com/loft-sh/vcluster-sdk).
+In this tutorial we will implement a ConfigMap syncer. Vcluster syncs ConfigMaps out of the box, but only those that are used by one of the pods created in vcluster. Here we will have a step-by-step look at a plugin implementation that will synchronize all ConfigMaps using the [vcluster plugin SDK](https://github.com/spectrocloud/vcluster-sdk).
 
 
 ### Prerequisites
@@ -19,7 +19,7 @@ Before starting to develop, make sure you have installed the following tools on 
 
 Check out the vcluster plugin example via:
 ```
-git clone https://github.com/loft-sh/vcluster-plugin-example.git
+git clone https://github.com/spectrocloud/vcluster-plugin-example.git
 ```
 
 You'll see a bunch of files already created, but lets take a look at the `main.go` file:
@@ -27,8 +27,8 @@ You'll see a bunch of files already created, but lets take a look at the `main.g
 package main
 
 import (
-	"github.com/loft-sh/vcluster-sdk/plugin"
-	"github.com/loft-sh/vcluster-sync-all-configmaps/syncers"
+	"github.com/spectrocloud/vcluster-sdk/plugin"
+	"github.com/spectrocloud/vcluster-sync-all-configmaps/syncers"
 )
 
 func main() {
@@ -40,11 +40,11 @@ func main() {
 
 Let's break down what is happening in the `main()` function above.
 
-`ctx := plugin.MustInit("sync-all-configmaps-plugin")` - SDK will contact the vcluster backend server and retrieve it's configuration. The returned struct of type [`RegisterContext`](https://pkg.go.dev/github.com/loft-sh/vcluster-sdk/syncer/context#RegisterContext) contains information about vcluster flags, namespace, vcluster client config, controller manager objects, etc. 
+`ctx := plugin.MustInit("sync-all-configmaps-plugin")` - SDK will contact the vcluster backend server and retrieve it's configuration. The returned struct of type [`RegisterContext`](https://pkg.go.dev/github.com/spectrocloud/vcluster-sdk/syncer/context#RegisterContext) contains information about vcluster flags, namespace, vcluster client config, controller manager objects, etc. 
 
-`plugin.MustRegister(syncers.NewConfigMapSyncer(ctx))` - we will implement the `NewConfigMapSyncer` function below, but for now, all we need to know is that it should return a struct that implements [`Base`](https://pkg.go.dev/github.com/loft-sh/vcluster-sdk/syncer#Base) interface, which is accepted by the [`MustRegister`](https://pkg.go.dev/github.com/loft-sh/vcluster-sdk/plugin#MustRegister) function. We should call [`MustRegister`](https://pkg.go.dev/github.com/loft-sh/vcluster-sdk/plugin#MustRegister) function for each syncer that we wish to be managed by the plugins controller manager.
+`plugin.MustRegister(syncers.NewConfigMapSyncer(ctx))` - we will implement the `NewConfigMapSyncer` function below, but for now, all we need to know is that it should return a struct that implements [`Base`](https://pkg.go.dev/github.com/spectrocloud/vcluster-sdk/syncer#Base) interface, which is accepted by the [`MustRegister`](https://pkg.go.dev/github.com/spectrocloud/vcluster-sdk/plugin#MustRegister) function. We should call [`MustRegister`](https://pkg.go.dev/github.com/spectrocloud/vcluster-sdk/plugin#MustRegister) function for each syncer that we wish to be managed by the plugins controller manager.
 
-`plugin.MustStart()` - this blocking function will wait until the vcluster pod where this plugin container is running becomes the leader. Next, it will call the `Init()` and `RegisterIndices()` functions on the syncers that implement the [`Initializer`](https://pkg.go.dev/github.com/loft-sh/vcluster-sdk/syncer#Initializer) and [`IndicesRegisterer`](https://pkg.go.dev/github.com/loft-sh/vcluster-sdk/syncer#IndicesRegisterer) respectively. Afterwards, the SDK will start its controller managers and call the `RegisterSyncer` or `RegisterFakeSyncer` function on the syncers that implement [`FakeSyncer`](https://pkg.go.dev/github.com/loft-sh/vcluster-sdk/syncer#FakeSyncer) and [`Syncer`](https://pkg.go.dev/github.com/loft-sh/vcluster-sdk/syncer#Syncer) interfaces. Additionally, after configuring the default controller for the syncers, the `ModifyController` function is called for the syncers that implement [`ControllerModifier`](https://pkg.go.dev/github.com/loft-sh/vcluster-sdk/syncer#ControllerModifier) interface, which gives a plugin developer a chance to interact with the controller builder object. All these interfaces act like hooks into different points of the SDK to allow you to customize the controller that will call your syncer based on the changes to the watched resources.
+`plugin.MustStart()` - this blocking function will wait until the vcluster pod where this plugin container is running becomes the leader. Next, it will call the `Init()` and `RegisterIndices()` functions on the syncers that implement the [`Initializer`](https://pkg.go.dev/github.com/spectrocloud/vcluster-sdk/syncer#Initializer) and [`IndicesRegisterer`](https://pkg.go.dev/github.com/spectrocloud/vcluster-sdk/syncer#IndicesRegisterer) respectively. Afterwards, the SDK will start its controller managers and call the `RegisterSyncer` or `RegisterFakeSyncer` function on the syncers that implement [`FakeSyncer`](https://pkg.go.dev/github.com/spectrocloud/vcluster-sdk/syncer#FakeSyncer) and [`Syncer`](https://pkg.go.dev/github.com/spectrocloud/vcluster-sdk/syncer#Syncer) interfaces. Additionally, after configuring the default controller for the syncers, the `ModifyController` function is called for the syncers that implement [`ControllerModifier`](https://pkg.go.dev/github.com/spectrocloud/vcluster-sdk/syncer#ControllerModifier) interface, which gives a plugin developer a chance to interact with the controller builder object. All these interfaces act like hooks into different points of the SDK to allow you to customize the controller that will call your syncer based on the changes to the watched resources.
 
 
 ### Implementing a syncer for a namespaced resource
@@ -55,9 +55,9 @@ In this chapter, we take a look at the `sync-all-configmaps.go` file that can be
 package syncers
 
 import (
-	"github.com/loft-sh/vcluster-sdk/syncer"
-	syncercontext "github.com/loft-sh/vcluster-sdk/syncer/context"
-	"github.com/loft-sh/vcluster-sdk/syncer/translator"
+	"github.com/spectrocloud/vcluster-sdk/syncer"
+	syncercontext "github.com/spectrocloud/vcluster-sdk/syncer/context"
+	"github.com/spectrocloud/vcluster-sdk/syncer/translator"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -75,10 +75,10 @@ type configMapSyncer struct {
 }
 ```
 
-After an import block, we see the `NewConfigMapSyncer` function, which is being called from the `main.go`. It returns a new instance of the `configMapSyncer` struct, which is defined by a single nested anonymous struct of type [`NamespacedTranslator`](https://pkg.go.dev/github.com/loft-sh/vcluster-sdk/syncer/translator#NamespacedTranslator). The [`NamespacedTranslator`](https://pkg.go.dev/github.com/loft-sh/vcluster-sdk/syncer/translator#NamespacedTranslator) implements many functions of the [`Syncer`](https://pkg.go.dev/github.com/loft-sh/vcluster-sdk/syncer#Syncer) interface for us, and we will implement the remaining ones - `SyncDown` and `Sync`.
+After an import block, we see the `NewConfigMapSyncer` function, which is being called from the `main.go`. It returns a new instance of the `configMapSyncer` struct, which is defined by a single nested anonymous struct of type [`NamespacedTranslator`](https://pkg.go.dev/github.com/spectrocloud/vcluster-sdk/syncer/translator#NamespacedTranslator). The [`NamespacedTranslator`](https://pkg.go.dev/github.com/spectrocloud/vcluster-sdk/syncer/translator#NamespacedTranslator) implements many functions of the [`Syncer`](https://pkg.go.dev/github.com/spectrocloud/vcluster-sdk/syncer#Syncer) interface for us, and we will implement the remaining ones - `SyncDown` and `Sync`.
 
 :::info 
-You can get more familiar with the interfaces mentioned above by reading the SDK source files on GitHub - [vcluster-sdk/syncer/types.go](https://github.com/loft-sh/vcluster-sdk/blob/main/syncer/types.go) and [vcluster-sdk/syncer/translator/translator.go](https://github.com/loft-sh/vcluster-sdk/blob/main/syncer/translator/translator.go), or by using pkg.go.dev website - [Syncer](https://pkg.go.dev/github.com/loft-sh/vcluster-sdk/syncer#Syncer) and [NamespacedTranslator](https://pkg.go.dev/github.com/loft-sh/vcluster-sdk/syncer/translator#NamespacedTranslator).
+You can get more familiar with the interfaces mentioned above by reading the SDK source files on GitHub - [vcluster-sdk/syncer/types.go](https://github.com/spectrocloud/vcluster-sdk/blob/main/syncer/types.go) and [vcluster-sdk/syncer/translator/translator.go](https://github.com/spectrocloud/vcluster-sdk/blob/main/syncer/translator/translator.go), or by using pkg.go.dev website - [Syncer](https://pkg.go.dev/github.com/spectrocloud/vcluster-sdk/syncer#Syncer) and [NamespacedTranslator](https://pkg.go.dev/github.com/spectrocloud/vcluster-sdk/syncer/translator#NamespacedTranslator).
 :::
 
 
@@ -136,10 +136,10 @@ func newIfNil(updated *corev1.ConfigMap, pObj *corev1.ConfigMap) *corev1.ConfigM
 }
 ```
 
-As you might have noticed, the changes to the Immutable field of the ConfigMap are not being checked and propagated to the updated ConfigMap. That is done just for the simplification of the code in this tutorial. In the real world use cases, there will likely be many scenarios and edge cases that you will need to handle differently than just with a simple comparison and assignment. For example, you will need to look out for label selectors that are interpreted in the host cluster, e.g. pod selectors in the NetworkPolicy resources are interpreted by the host cluster network plugin. Such selectors must be translated when synced down to the host resources. Several functions for the common use cases are [built into the SDK in the `syncer/translator` package](https://pkg.go.dev/github.com/loft-sh/vcluster-sdk/syncer/translator#pkg-functions), including the `TranslateLabelSelector` function.
+As you might have noticed, the changes to the Immutable field of the ConfigMap are not being checked and propagated to the updated ConfigMap. That is done just for the simplification of the code in this tutorial. In the real world use cases, there will likely be many scenarios and edge cases that you will need to handle differently than just with a simple comparison and assignment. For example, you will need to look out for label selectors that are interpreted in the host cluster, e.g. pod selectors in the NetworkPolicy resources are interpreted by the host cluster network plugin. Such selectors must be translated when synced down to the host resources. Several functions for the common use cases are [built into the SDK in the `syncer/translator` package](https://pkg.go.dev/github.com/spectrocloud/vcluster-sdk/syncer/translator#pkg-functions), including the `TranslateLabelSelector` function.
 
 Also, notice that this example lacks the updates to the ConfigMap resource in vcluster. Here we propagate the changes only down to the ConfigMap in the host cluster, but there are resources or use cases where a syncer would update the synced resource in vcluster. For example, this might be an update of the status subresource or synchronization of any other field that some controller sets on the host side, e.g., finalizers. Implementation of such updates needs to be considered on case-by-case basis.
-For some use cases, you may need to sync the resources in the opposite direction, from the host cluster up into the vcluster, or even in both directions. If that is what your plugin needs to do, you will implement the [`UpSyncer`](https://pkg.go.dev/github.com/loft-sh/vcluster-sdk/syncer#UpSyncer) interface defined by the SDK.
+For some use cases, you may need to sync the resources in the opposite direction, from the host cluster up into the vcluster, or even in both directions. If that is what your plugin needs to do, you will implement the [`UpSyncer`](https://pkg.go.dev/github.com/spectrocloud/vcluster-sdk/syncer#UpSyncer) interface defined by the SDK.
 
 ### Build and push your plugin
 

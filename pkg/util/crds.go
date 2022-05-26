@@ -8,8 +8,8 @@ import (
 	"math"
 	"time"
 
-	"github.com/loft-sh/vcluster/pkg/util/applier"
-	"github.com/loft-sh/vcluster/pkg/util/loghelper"
+	"github.com/spectrocloud/vcluster/pkg/util/applier"
+	"github.com/spectrocloud/vcluster/pkg/util/loghelper"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"

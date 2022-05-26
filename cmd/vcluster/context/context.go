@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/loft-sh/vcluster/pkg/util/blockingcacheclient"
+	"github.com/spectrocloud/vcluster/pkg/util/blockingcacheclient"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"

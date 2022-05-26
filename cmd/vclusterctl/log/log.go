@@ -3,7 +3,7 @@ package log
 import (
 	"strings"
 
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/log/survey"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/log/survey"
 
 	"github.com/mgutz/ansi"
 	"github.com/sirupsen/logrus"

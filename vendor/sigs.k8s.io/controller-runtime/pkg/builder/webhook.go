@@ -167,14 +167,14 @@ func (blder *WebhookBuilder) getValidatingWebhook() *admission.Webhook {
 func (blder *WebhookBuilder) registerConversionWebhook() error {
 	ok, err := conversion.IsConvertible(blder.mgr.GetScheme(), blder.apiType)
 	if err != nil {
-		log.Error(err, "conversion check failed", "GVK", blder.gvk)
+		log.Error(err, "conversion check failed", "object", blder.apiType)
 		return err
 	}
 	if ok {
 		if !blder.isAlreadyHandled("/convert") {
 			blder.mgr.GetWebhookServer().Register("/convert", &conversion.Webhook{})
 		}
-		log.Info("Conversion webhook enabled", "GVK", blder.gvk)
+		log.Info("conversion webhook enabled", "object", blder.apiType)
 	}
 
 	return nil

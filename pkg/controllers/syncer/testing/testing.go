@@ -3,12 +3,13 @@ package testing
 import (
 	"context"
 	"fmt"
-	synccontext "github.com/loft-sh/vcluster/pkg/controllers/syncer/context"
-	"gotest.tools/assert"
 	"testing"
 
+	synccontext "github.com/spectrocloud/vcluster/pkg/controllers/syncer/context"
+	"gotest.tools/assert"
+
 	"github.com/ghodss/yaml"
-	testingutil "github.com/loft-sh/vcluster/pkg/util/testing"
+	testingutil "github.com/spectrocloud/vcluster/pkg/util/testing"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"

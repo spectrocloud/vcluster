@@ -48,7 +48,7 @@ service:
   type: LoadBalancer
 ```
 
-Now create the vcluster with the [vcluster cli](https://github.com/loft-sh/vcluster/releases) (at least version v0.8.0 or newer):
+Now create the vcluster with the [vcluster cli](https://github.com/spectrocloud/vcluster/releases) (at least version v0.8.0 or newer):
 ```
 # Create the vcluster
 vcluster create vcluster -n vcluster -f values.yaml --expose

@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/loft-sh/vcluster/pkg/server/handler"
-	"github.com/loft-sh/vcluster/pkg/util/encoding"
-	requestpkg "github.com/loft-sh/vcluster/pkg/util/request"
+	"github.com/spectrocloud/vcluster/pkg/server/handler"
+	"github.com/spectrocloud/vcluster/pkg/util/encoding"
+	requestpkg "github.com/spectrocloud/vcluster/pkg/util/request"
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metainternalversionscheme "k8s.io/apimachinery/pkg/apis/meta/internalversion/scheme"

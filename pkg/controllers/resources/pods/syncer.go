@@ -2,18 +2,19 @@ package pods
 
 import (
 	"context"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"reflect"
 	"time"
 
-	"github.com/loft-sh/vcluster/pkg/controllers/syncer"
-	synccontext "github.com/loft-sh/vcluster/pkg/controllers/syncer/context"
-	"github.com/loft-sh/vcluster/pkg/controllers/syncer/translator"
+	"k8s.io/apimachinery/pkg/util/wait"
 
-	translatepods "github.com/loft-sh/vcluster/pkg/controllers/resources/pods/translate"
-	"github.com/loft-sh/vcluster/pkg/util/loghelper"
-	"github.com/loft-sh/vcluster/pkg/util/toleration"
+	"github.com/spectrocloud/vcluster/pkg/controllers/syncer"
+	synccontext "github.com/spectrocloud/vcluster/pkg/controllers/syncer/context"
+	"github.com/spectrocloud/vcluster/pkg/controllers/syncer/translator"
+
 	"github.com/pkg/errors"
+	translatepods "github.com/spectrocloud/vcluster/pkg/controllers/resources/pods/translate"
+	"github.com/spectrocloud/vcluster/pkg/util/loghelper"
+	"github.com/spectrocloud/vcluster/pkg/util/toleration"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"

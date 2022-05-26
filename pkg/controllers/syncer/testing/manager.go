@@ -2,14 +2,15 @@ package testing
 
 import (
 	"context"
+	"net/http"
+
 	"github.com/go-logr/logr"
-	"github.com/loft-sh/vcluster/pkg/util/log"
-	testingutil "github.com/loft-sh/vcluster/pkg/util/testing"
+	"github.com/spectrocloud/vcluster/pkg/util/log"
+	testingutil "github.com/spectrocloud/vcluster/pkg/util/testing"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/record"
-	"net/http"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"

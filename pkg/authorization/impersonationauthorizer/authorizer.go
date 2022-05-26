@@ -3,7 +3,7 @@ package impersonationauthorizer
 import (
 	"context"
 
-	"github.com/loft-sh/vcluster/pkg/util/clienthelper"
+	"github.com/spectrocloud/vcluster/pkg/util/clienthelper"
 
 	authv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

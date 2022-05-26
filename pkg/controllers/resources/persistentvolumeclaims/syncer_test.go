@@ -1,16 +1,16 @@
 package persistentvolumeclaims
 
 import (
-	synccontext "github.com/loft-sh/vcluster/pkg/controllers/syncer/context"
-	"github.com/loft-sh/vcluster/pkg/controllers/syncer/translator"
-	testingutil "github.com/loft-sh/vcluster/pkg/util/testing"
+	synccontext "github.com/spectrocloud/vcluster/pkg/controllers/syncer/context"
+	"github.com/spectrocloud/vcluster/pkg/controllers/syncer/translator"
+	testingutil "github.com/spectrocloud/vcluster/pkg/util/testing"
 	"gotest.tools/assert"
 	"k8s.io/apimachinery/pkg/types"
 	"testing"
 	"time"
 
-	generictesting "github.com/loft-sh/vcluster/pkg/controllers/syncer/testing"
-	"github.com/loft-sh/vcluster/pkg/util/translate"
+	generictesting "github.com/spectrocloud/vcluster/pkg/controllers/syncer/testing"
+	"github.com/spectrocloud/vcluster/pkg/util/translate"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"

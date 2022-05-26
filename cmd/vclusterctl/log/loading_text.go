@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/log/terminal"
+	"github.com/spectrocloud/vcluster/cmd/vclusterctl/log/terminal"
 
 	"github.com/mgutz/ansi"
 )
