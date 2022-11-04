@@ -14,8 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// Pause
-
+// PauseVCluster pauses a running vcluster
 func PauseVCluster(kubeClient *kubernetes.Clientset, name, namespace string, log log.Logger) error {
 	// scale down vcluster itself
 	labelSelector := "app=vcluster,release=" + name
@@ -52,6 +51,7 @@ func PauseVCluster(kubeClient *kubernetes.Clientset, name, namespace string, log
 	return nil
 }
 
+// DeleteVClusterWorkloads deletes all pods associated with a running vcluster
 func DeleteVClusterWorkloads(kubeClient *kubernetes.Clientset, labelSelector, namespace string, log log.Logger) error {
 	list, err := kubeClient.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{LabelSelector: labelSelector})
 	if err != nil {
@@ -193,10 +193,9 @@ func scaleDownStatefulSet(kubeClient kubernetes.Interface, labelSelector, namesp
 	return true, nil
 }
 
-// Resume
-
+// ResumeVCluster resumes a paused vcluster
 func ResumeVCluster(kubeClient *kubernetes.Clientset, name, namespace string, log log.Logger) error {
-	// scale down vcluster itself
+	// scale up vcluster itself
 	labelSelector := "app=vcluster,release=" + name
 	found, err := scaleUpStatefulSet(kubeClient, labelSelector, namespace, log)
 	if err != nil {
@@ -209,19 +208,19 @@ func ResumeVCluster(kubeClient *kubernetes.Clientset, name, namespace string, lo
 			return errors.Errorf("couldn't find a paused vcluster %s in namespace %s. Make sure the vcluster exists and was paused previously", name, namespace)
 		}
 
-		// scale down kube api server
+		// scale up kube api server
 		_, err = scaleUpDeployment(kubeClient, "app=vcluster-api,release="+name, namespace, log)
 		if err != nil {
 			return err
 		}
 
-		// scale down kube controller
+		// scale up kube controller
 		_, err = scaleUpDeployment(kubeClient, "app=vcluster-controller,release="+name, namespace, log)
 		if err != nil {
 			return err
 		}
 
-		// scale down etcd
+		// scale up etcd
 		_, err = scaleUpStatefulSet(kubeClient, "app=vcluster-etcd,release="+name, namespace, log)
 		if err != nil {
 			return err
