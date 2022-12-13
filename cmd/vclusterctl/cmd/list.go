@@ -2,10 +2,11 @@ package cmd
 
 import (
 	"encoding/json"
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/cmd/find"
-	"k8s.io/client-go/tools/clientcmd"
 	"strings"
 	"time"
+
+	"github.com/loft-sh/vcluster/cmd/vclusterctl/cmd/find"
+	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/loft-sh/vcluster/cmd/vclusterctl/flags"
 	"github.com/loft-sh/vcluster/cmd/vclusterctl/log"
@@ -53,7 +54,8 @@ vcluster list --output json
 vcluster list --namespace test
 #######################################################
 	`,
-		Args: cobra.NoArgs,
+		Args:    cobra.NoArgs,
+		Aliases: []string{"ls"},
 		RunE: func(cobraCmd *cobra.Command, args []string) error {
 			return cmd.Run(cobraCmd, args)
 		},
@@ -92,7 +94,7 @@ func (cmd *ListCmd) Run(cobraCmd *cobra.Command, args []string) error {
 		}
 		cmd.log.WriteString(string(bytes) + "\n")
 	} else {
-		header := []string{"NAME", "NAMESPACE", "STATUS", "CONNECTED", "CREATED", "AGE"}
+		header := []string{"NAME", "NAMESPACE", "STATUS", "CONNECTED", "CREATED", "AGE", "CONTEXT"}
 		values := [][]string{}
 		for _, vcluster := range vClusters {
 			connected := ""
@@ -107,6 +109,7 @@ func (cmd *ListCmd) Run(cobraCmd *cobra.Command, args []string) error {
 				connected,
 				vcluster.Created.String(),
 				time.Since(vcluster.Created.Time).Round(1 * time.Second).String(),
+				vcluster.Context,
 			})
 		}
 

@@ -24,6 +24,43 @@ If release name contains chart name it will be used as a full name.
 {{- end -}}
 {{- end -}}
 
+{{/*
+Whether the ingressclasses syncer should be enabled
+*/}}
+{{- define "vcluster.syncIngressclassesEnabled" -}}
+{{- if or
+    (.Values.sync.ingressclasses).enabled
+    (and
+        .Values.sync.ingresses.enabled
+        (not .Values.sync.ingressclasses)) -}}
+    {{- true -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Whether to create a cluster role or not
+*/}}
+{{- define "vcluster.createClusterRole" -}}
+{{- if or
+    (not
+        (empty (include "vcluster.serviceMapping.fromHost" . )))
+    (not
+        (empty (include "vcluster.plugin.clusterRoleExtraRules" . )))
+    .Values.rbac.clusterRole.create
+    .Values.sync.hoststorageclasses.enabled
+    (index
+        ((index .Values.sync "legacy-storageclasses") | default (dict "enabled" false))
+    "enabled")
+    (include "vcluster.syncIngressclassesEnabled" . )
+    .Values.sync.nodes.enabled
+    .Values.sync.persistentvolumes.enabled
+    .Values.sync.storageclasses.enabled
+    .Values.sync.priorityclasses.enabled
+    .Values.sync.volumesnapshots.enabled -}}
+    {{- true -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "vcluster.clusterRoleName" -}}
 {{- printf "vc-%s-v-%s" .Release.Name .Release.Namespace | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
@@ -65,13 +102,23 @@ Prints only the flags that modify the defaults:
 - when non-default controller has enabled: true => `- "--sync=controller`
 */}}
 {{- define "vcluster.syncer.syncArgs" -}}
-{{- $defaultEnabled := list "services" "configmaps" "secrets" "endpoints" "pods" "events" "persistentvolumeclaims" "ingresses" "fake-nodes" "fake-persistentvolumes" -}}
+{{- $defaultEnabled := list "services" "configmaps" "secrets" "endpoints" "pods" "events" "persistentvolumeclaims" "fake-nodes" "fake-persistentvolumes" -}}
+{{- if and (hasKey .Values.sync.nodes "enableScheduler") .Values.sync.nodes.enableScheduler -}}
+    {{- $defaultEnabled = concat $defaultEnabled (list "csinodes" "csidrivers" "csistoragecapacities" ) -}}
+{{- end -}}
 {{- range $key, $val := .Values.sync }}
 {{- if and (has $key $defaultEnabled) (not $val.enabled) }}
 - --sync=-{{ $key }}
 {{- else if and (not (has $key $defaultEnabled)) ($val.enabled)}}
+{{- if eq $key "legacy-storageclasses" }}
+- --sync=hoststorageclasses
+{{- else }}
 - --sync={{ $key }}
 {{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if not (include "vcluster.syncIngressclassesEnabled" . ) }}
+- --sync=-ingressclasses
 {{- end -}}
 {{- end -}}
 

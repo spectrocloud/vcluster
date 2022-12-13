@@ -22,8 +22,10 @@ spec:
     matchLabels:
       app: vcluster
       release: {{ .Release.Name }}
-  {{- if .Values.storage.persistence }}
-  {{- if not .Values.storage.volumeClaimTemplates }}
+  {{- if (hasKey .Values "volumeClaimTemplates") }}
+  volumeClaimTemplates:
+{{ toYaml .Values.volumeClaimTemplates | indent 4 }}
+  {{- else if .Values.storage.persistence }}
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -33,16 +35,19 @@ spec:
         resources:
           requests:
             storage: {{ .Values.storage.size }}
-  {{- else }}
-  volumeClaimTemplates:
-{{ toYaml .Values.volumeClaimTemplates | indent 4 }}
-  {{- end }}
   {{- end }}
   template:
     metadata:
+  {{- if .Values.podAnnotations }}
+      annotations:
+{{ toYaml .Values.podAnnotations | indent 8 }}
+  {{- end }}
       labels:
         app: vcluster
         release: {{ .Release.Name }}
+      {{- range $k, $v := .Values.podLabels }}
+        {{ $k }}: {{ $v | quote }}
+      {{- end }}
     spec:
       terminationGracePeriodSeconds: 10
       nodeSelector:
@@ -103,9 +108,9 @@ spec:
           - --status-socket=/run/k0s/status.sock
           {{- end }}
           {{- if not .Values.sync.nodes.enableScheduler }}
-          - --disable-components=konnectivity-server,kube-scheduler,csr-approver,default-psp,kube-proxy,coredns,network-provider,helm,metrics-server,kubelet-config
+          - --disable-components=konnectivity-server,kube-scheduler,csr-approver,kube-proxy,coredns,network-provider,helm,metrics-server,kubelet-config
           {{- else }}
-          - --disable-components=konnectivity-server,csr-approver,default-psp,kube-proxy,coredns,network-provider,helm,metrics-server,kubelet-config
+          - --disable-components=konnectivity-server,csr-approver,kube-proxy,coredns,network-provider,helm,metrics-server,kubelet-config
           {{- end }}
           {{- range $f := .Values.vcluster.extraArgs }}
           - {{ $f | quote }}
@@ -114,6 +119,8 @@ spec:
           {{- if .Values.vcluster.env }}
 {{ toYaml .Values.vcluster.env | indent 10 }}
           {{- end }}
+          - name: ETCD_UNSUPPORTED_ARCH
+            value: arm64
           - name: CONFIG_READY
             valueFrom:
               secretKeyRef:
@@ -183,6 +190,12 @@ spec:
           {{- end }}
           {{- if .Values.sync.nodes.nodeSelector }}
           - --node-selector={{ .Values.sync.nodes.nodeSelector }}
+          {{- end }}
+          {{- if .Values.hostpathMapper.enabled }}
+          - --rewrite-host-paths=true
+          {{- end }}
+          {{- if .Values.multiNamespaceMode.enabled }}
+          - --multi-namespace-mode=true
           {{- end }}
           {{- range $f := .Values.syncer.extraArgs }}
           - {{ $f | quote }}

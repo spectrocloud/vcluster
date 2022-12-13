@@ -24,8 +24,10 @@ spec:
     matchLabels:
       app: vcluster-etcd
       release: {{ .Release.Name }}
-  {{- if .Values.etcd.storage.persistence }}
-  {{- if not .Values.etcd.storage.volumeClaimTemplates }}
+  {{- if (hasKey .Values.etcd "volumeClaimTemplates") }}
+  volumeClaimTemplates:
+{{ toYaml .Values.etcd.volumeClaimTemplates | indent 4 }}
+  {{- else if .Values.etcd.storage.persistence }}
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -35,16 +37,19 @@ spec:
         resources:
           requests:
             storage: {{ .Values.etcd.storage.size }}
-  {{- else }}
-  volumeClaimTemplates:
-{{ toYaml .Values.etcd.volumeClaimTemplates | indent 4 }}
-  {{- end }}
   {{- end }}
   template:
     metadata:
+  {{- if .Values.etcd.podAnnotations }}
+      annotations:
+{{ toYaml .Values.etcd.podAnnotations | indent 8 }}
+  {{- end }}
       labels:
         app: vcluster-etcd
         release: {{ .Release.Name }}
+      {{- range $k, $v := .Values.etcd.podLabels }}
+        {{ $k }}: {{ $v | quote }}
+      {{- end }}
     spec:
       terminationGracePeriodSeconds: 10
       {{- if .Values.etcd.affinity }}
@@ -89,8 +94,6 @@ spec:
       {{- end }}
       nodeSelector:
 {{ toYaml .Values.etcd.nodeSelector | indent 8 }}
-      affinity:
-{{ toYaml .Values.etcd.affinity | indent 8 }}
       tolerations:
 {{ toYaml .Values.etcd.tolerations | indent 8 }}
       automountServiceAccountToken: false

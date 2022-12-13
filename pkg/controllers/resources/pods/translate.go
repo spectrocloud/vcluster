@@ -12,7 +12,7 @@ import (
 )
 
 func (s *podSyncer) translate(ctx *synccontext.SyncContext, vPod *corev1.Pod) (*corev1.Pod, error) {
-	kubeIP, dnsIP, ptrServiceList, err := s.getK8sIpDnsIpServiceList(ctx, vPod)
+	kubeIP, dnsIP, ptrServiceList, err := s.getK8sIPDNSIPServiceList(ctx, vPod)
 	if err != nil {
 		return nil, err
 	}
@@ -25,7 +25,7 @@ func (s *podSyncer) translate(ctx *synccontext.SyncContext, vPod *corev1.Pod) (*
 	return pPod, err
 }
 
-func (s *podSyncer) getK8sIpDnsIpServiceList(ctx *synccontext.SyncContext, vPod *corev1.Pod) (string, string, []*corev1.Service, error) {
+func (s *podSyncer) getK8sIPDNSIPServiceList(ctx *synccontext.SyncContext, vPod *corev1.Pod) (string, string, []*corev1.Service, error) {
 	kubeIP, err := s.findKubernetesIP(ctx)
 	if err != nil {
 		return "", "", nil, err
@@ -78,11 +78,10 @@ func (s *podSyncer) findKubernetesDNSIP(ctx *synccontext.SyncContext) (string, e
 }
 
 func (s *podSyncer) translateAndFindService(ctx *synccontext.SyncContext, namespace, name string) string {
-	pName := translate.PhysicalName(name, namespace)
 	pService := &corev1.Service{}
 	err := ctx.PhysicalClient.Get(context.TODO(), types.NamespacedName{
-		Name:      pName,
-		Namespace: ctx.TargetNamespace,
+		Name:      translate.Default.PhysicalName(name, namespace),
+		Namespace: translate.Default.PhysicalNamespace(namespace),
 	}, pService)
 	if err != nil {
 		return ""

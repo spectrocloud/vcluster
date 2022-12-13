@@ -33,9 +33,16 @@ spec:
       release: {{ .Release.Name }}
   template:
     metadata:
+  {{- if .Values.scheduler.podAnnotations }}
+      annotations:
+{{ toYaml .Values.scheduler.podAnnotations | indent 8 }}
+  {{- end }}
       labels:
         app: vcluster-scheduler
         release: {{ .Release.Name }}
+      {{- range $k, $v := .Values.scheduler.podLabels }}
+        {{ $k }}: {{ $v | quote }}
+      {{- end }}
     spec:
       terminationGracePeriodSeconds: 10
       {{- if .Values.scheduler.affinity }}
@@ -80,8 +87,6 @@ spec:
       {{- end }}
       nodeSelector:
 {{ toYaml .Values.scheduler.nodeSelector | indent 8 }}
-      affinity:
-{{ toYaml .Values.scheduler.affinity | indent 8 }}
       tolerations:
 {{ toYaml .Values.scheduler.tolerations | indent 8 }}
       automountServiceAccountToken: false
@@ -114,7 +119,6 @@ spec:
           {{- else }}
           - '--leader-elect=false'
           {{- end }}
-          - '--port=0'
           {{- range $f := .Values.scheduler.extraArgs }}
           - {{ $f | quote }}
           {{- end }}

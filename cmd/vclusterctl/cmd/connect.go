@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -14,9 +13,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pkg/errors"
-	"github.com/spf13/cobra"
+	"github.com/loft-sh/vcluster/cmd/vclusterctl/cmd/app/localkubernetes"
+	"github.com/loft-sh/vcluster/cmd/vclusterctl/cmd/find"
+	"github.com/loft-sh/vcluster/pkg/util/translate"
 	authenticationv1 "k8s.io/api/authentication/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+
+	"github.com/loft-sh/vcluster/pkg/upgrade"
+	"github.com/loft-sh/vcluster/pkg/util/portforward"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
@@ -78,7 +82,7 @@ func NewConnectCmd(globalFlags *flags.GlobalFlags) *cobra.Command {
 	}
 
 	cobraCmd := &cobra.Command{
-		Use:   "connect",
+		Use:   "connect [flags] vcluster_name",
 		Short: "Connect to a virtual cluster",
 		Long: `
 #######################################################
@@ -93,7 +97,8 @@ vcluster connect test -n test -- bash
 vcluster connect test -n test -- kubectl get ns
 #######################################################
 	`,
-		Args: cobra.MinimumNArgs(1),
+		Args:              cobra.MinimumNArgs(1),
+		ValidArgsFunction: newValidVClusterNameFunc(globalFlags),
 		RunE: func(cobraCmd *cobra.Command, args []string) error {
 			// Check for newer version
 			upgrade.PrintNewerVersionWarning()
@@ -187,7 +192,7 @@ func (cmd *ConnectCmd) Connect(vclusterName string, command []string) error {
 		if !cmd.BackgroundProxy && cmd.portForwarding {
 			cmd.Log.Warnf("Since you are using port-forwarding to connect, you will need to leave this terminal open")
 			c := make(chan os.Signal, 1)
-			signal.Notify(c, os.Interrupt, os.Kill, syscall.SIGTERM)
+			signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 			go func() {
 				<-c
 				kubeConfig, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(clientcmd.NewDefaultClientConfigLoadingRules(), &clientcmd.ConfigOverrides{}).RawConfig()
@@ -217,7 +222,7 @@ func (cmd *ConnectCmd) Connect(vclusterName string, command []string) error {
 			return err
 		}
 	} else {
-		err = ioutil.WriteFile(cmd.KubeConfig, out, 0666)
+		err = os.WriteFile(cmd.KubeConfig, out, 0666)
 		if err != nil {
 			return errors.Wrap(err, "write kube config")
 		}
@@ -405,8 +410,8 @@ func (cmd *ConnectCmd) getVClusterKubeConfig(vclusterName string, command []stri
 		stdout := io.Writer(os.Stdout)
 		stderr := io.Writer(os.Stderr)
 		if len(command) > 0 || cmd.BackgroundProxy {
-			stdout = ioutil.Discard
-			stderr = ioutil.Discard
+			stdout = io.Discard
+			stderr = io.Discard
 		}
 
 		go func() {
@@ -547,11 +552,13 @@ func (cmd *ConnectCmd) executeCommand(vKubeConfig api.Config, command []string) 
 	}
 
 	// write a temporary kube file
-	tempFile, err := ioutil.TempFile("", "")
+	tempFile, err := os.CreateTemp("", "")
 	if err != nil {
 		return errors.Wrap(err, "create temp file")
 	}
-	defer os.Remove(tempFile.Name())
+	defer func(name string) {
+		_ = os.Remove(name)
+	}(tempFile.Name())
 
 	_, err = tempFile.Write(out)
 	if err != nil {
@@ -654,7 +661,7 @@ func (cmd *ConnectCmd) createServiceAccountToken(vKubeConfig api.Config) (string
 	if strings.Contains(cmd.ServiceAccount, "/") {
 		splitted := strings.Split(cmd.ServiceAccount, "/")
 		if len(splitted) != 2 {
-			return "", fmt.Errorf("unexpected service account reference, expected ServiceAccountNamspace/ServiceAccountName")
+			return "", fmt.Errorf("unexpected service account reference, expected ServiceAccountNamespace/ServiceAccountName")
 		}
 
 		serviceAccountNamespace = splitted[0]

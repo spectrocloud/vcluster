@@ -2,10 +2,11 @@ package pods
 
 import (
 	"context"
-	"k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"reflect"
 	"time"
+
+	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/util/wait"
 
 	"github.com/loft-sh/vcluster/pkg/controllers/syncer"
 	synccontext "github.com/loft-sh/vcluster/pkg/controllers/syncer/context"
@@ -305,7 +306,7 @@ func (s *podSyncer) Sync(ctx *synccontext.SyncContext, pObj client.Object, vObj 
 
 	// sync ephemeral containers
 	if syncEphemeralContainers(vPod, strippedPod) {
-		kubeIP, _, ptrServiceList, err := s.getK8sIpDnsIpServiceList(ctx, vPod)
+		kubeIP, _, ptrServiceList, err := s.getK8sIPDNSIPServiceList(ctx, vPod)
 		if err != nil {
 			return ctrl.Result{}, err
 		}

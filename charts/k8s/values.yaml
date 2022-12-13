@@ -40,7 +40,11 @@ sync:
   persistentvolumeclaims:
     enabled: true
   ingresses:
-    enabled: true
+    enabled: false
+  ingressclasses: {}
+    # By default IngressClasses sync is enabled when the Ingress sync is enabled
+    # but it can be explicitly disabled by setting:
+    # enabled: false
   fake-nodes:
     enabled: true # will be ignored if nodes.enabled = true
   fake-persistentvolumes:
@@ -66,7 +70,8 @@ sync:
     enabled: false
   storageclasses:
     enabled: false
-  legacy-storageclasses:
+  # formerly named - "legacy-storageclasses"
+  hoststorageclasses:
     enabled: false
   priorityclasses:
     enabled: false
@@ -97,6 +102,9 @@ mapServices:
   # also create the namespace for the service.
   fromHost: []
 
+hostpathMapper:
+  enabled: false
+
 # Syncer configuration
 syncer:
   # Image to use for the syncer
@@ -113,9 +121,12 @@ syncer:
     enabled: true
   resources:
     limits:
-      memory: 1Gi
+      cpu: 1000m
+      memory: 512Mi
     requests:
-      cpu: 10m
+      # ensure that cpu/memory requests are high enough.
+      # for example gke wants minimum 10m/32Mi here!
+      cpu: 20m
       memory: 64Mi
   # Extra volumes 
   volumes: []
@@ -131,6 +142,8 @@ syncer:
   labels: {}
   # Extra Annotations for the syncer deployment
   annotations: {}
+  podAnnotations: {}
+  podLabels: {}
   priorityClassName: ""
   kubeConfigContextName: "my-vcluster"
   # Security context configuration
@@ -138,7 +151,7 @@ syncer:
 
 # Etcd settings
 etcd:
-  image: k8s.gcr.io/etcd:3.5.1-0
+  image: registry.k8s.io/etcd:3.5.6-0
   # The amount of replicas to run 
   replicas: 1
   # NodeSelector used
@@ -151,6 +164,8 @@ etcd:
   labels: {}
   # Extra Annotations
   annotations: {}
+  podAnnotations: {}
+  podLabels: {}
   resources:
     requests:
       cpu: 20m
@@ -166,10 +181,10 @@ etcd:
     # if empty default StorageClass defined in your host cluster will be used
     #className:
   priorityClassName: ""
-
+  securityContext: {}
 # Kubernetes Controller Manager settings
 controller:
-  image: k8s.gcr.io/kube-controller-manager:v1.24.3
+  image: registry.k8s.io/kube-controller-manager:v1.26.0
   # The amount of replicas to run the deployment with
   replicas: 1
   # NodeSelector used 
@@ -182,14 +197,16 @@ controller:
   labels: {}
   # Extra Annotations
   annotations: {}
+  podAnnotations: {}
+  podLabels: {}
   resources:
     requests:
       cpu: 15m
   priorityClassName: ""
-
+  securityContext: {}
 # Kubernetes Scheduler settings. Only enabled if sync.nodes.enableScheduler is true
 scheduler:
-  image: k8s.gcr.io/kube-scheduler:v1.24.3
+  image: registry.k8s.io/kube-scheduler:v1.26.0
   # The amount of replicas to run the deployment with
   replicas: 1
   # NodeSelector used
@@ -202,6 +219,8 @@ scheduler:
   labels: {}
   # Extra Annotations
   annotations: {}
+  podAnnotations: {}
+  podLabels: {}
   resources:
     requests:
       cpu: 10m
@@ -209,7 +228,7 @@ scheduler:
 
 # Kubernetes API Server settings
 api:
-  image: k8s.gcr.io/kube-apiserver:v1.24.3
+  image: registry.k8s.io/kube-apiserver:v1.26.0
   extraArgs: []
   # The amount of replicas to run the deployment with
   replicas: 1
@@ -223,12 +242,14 @@ api:
   labels: {}
   # Extra Annotations for the syncer deployment
   annotations: {}
+  podAnnotations: {}
+  podLabels: {}
   resources:
     requests:
       cpu: 40m
       memory: 300Mi
   priorityClassName: ""
-
+  securityContext: {}
 # Service account that should be used by the vcluster
 serviceAccount:
   create: true
@@ -254,14 +275,27 @@ rbac:
     # Necessary extended roles are created based on the enabled syncers (.sync.*.enabled)
     # Support for this value will be removed in a future version of the vcluster
     extended: false
-# Service configurations
+
+# Syncer service configurations
 service:
   type: ClusterIP
-  # Configuration for LoadBalancer service type
+
+  # Optional configuration
+  # A list of IP addresses for which nodes in the cluster will also accept traffic for this service.
+  # These IPs are not managed by Kubernetes; e.g., an external load balancer.
   externalIPs: []
+
+  # Optional configuration for LoadBalancer & NodePort service types
+  # Route external traffic to node-local or cluster-wide endpoints [ Local | Cluster ]
   externalTrafficPolicy: ""
-  # CIDR block(s) for the service allowlist; only used when the Service type is LoadBalancer
+
+  # Optional configuration for LoadBalancer service type
+  # Specify IP of load balancer to be created
+  loadBalancerIP: ""
+  # CIDR block(s) for the service allowlist
   loadBalancerSourceRanges: []
+  # Set the loadBalancerClass if using an external load balancer controller
+  loadBalancerClass: ""
 
 # job configuration
 job:
@@ -270,6 +304,19 @@ job:
   nodeSelector: {}
   affinity: {}
   tolerations: []
+  resources: {}
+  podAnnotations: {}
+  podLabels: {}
+  # Security context configuration of the container
+  securityContext:
+    capabilities:
+      drop:
+        - ALL
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
 
 # Configure the ingress resource that allows you to access the vcluster
 ingress:
@@ -307,7 +354,19 @@ coredns:
     externalTrafficPolicy: ""
     # Extra Annotations
     annotations: {}
-  resources: ""
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 170Mi
+    requests:
+      cpu: 3m
+      memory: 16Mi
+# if below option is configured, it will override the coredns manifests with the following string
+#  manifests: |-
+#    apiVersion: ...
+#    ...
+  podAnnotations: {}
+  podLabels: {}
 
 # If enabled will deploy vcluster in an isolated mode with pod security
 # standards, limit ranges and resource quotas
@@ -370,3 +429,6 @@ init:
   # this allows you to use helm values inside, e.g.: {{ .Release.Name }}
   manifestsTemplate: ''
   helm: []
+
+multiNamespaceMode:
+  enabled: false

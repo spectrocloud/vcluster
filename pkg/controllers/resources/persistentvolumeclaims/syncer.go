@@ -2,6 +2,7 @@ package persistentvolumeclaims
 
 import (
 	"context"
+
 	"github.com/loft-sh/vcluster/pkg/controllers/resources/persistentvolumes"
 	synccontext "github.com/loft-sh/vcluster/pkg/controllers/syncer/context"
 	"github.com/loft-sh/vcluster/pkg/controllers/syncer/translator"
@@ -31,16 +32,17 @@ const (
 	bindCompletedAnnotation      = "pv.kubernetes.io/bind-completed"
 	boundByControllerAnnotation  = "pv.kubernetes.io/bound-by-controller"
 	storageProvisionerAnnotation = "volume.beta.kubernetes.io/storage-provisioner"
-	selectedNodeAnnotation       = "volume.kubernetes.io/selected-node"
 )
 
 func New(ctx *synccontext.RegisterContext) (syncer.Object, error) {
+	storageClassesEnabled := ctx.Controllers.Has("storageclasses")
+	excludedAnnotations := []string{bindCompletedAnnotation, boundByControllerAnnotation, storageProvisionerAnnotation}
 	return &persistentVolumeClaimSyncer{
-		NamespacedTranslator: translator.NewNamespacedTranslator(ctx, "persistent-volume-claim", &corev1.PersistentVolumeClaim{}, bindCompletedAnnotation, boundByControllerAnnotation, storageProvisionerAnnotation, selectedNodeAnnotation),
+		NamespacedTranslator: translator.NewNamespacedTranslator(ctx, "persistent-volume-claim", &corev1.PersistentVolumeClaim{}, excludedAnnotations...),
 
-		storageClassesEnabled:    ctx.Controllers["storageclasses"],
+		storageClassesEnabled:    storageClassesEnabled,
 		schedulerEnabled:         ctx.Options.EnableScheduler,
-		useFakePersistentVolumes: !ctx.Controllers["persistentvolumes"],
+		useFakePersistentVolumes: !ctx.Controllers.Has("persistentvolumes"),
 	}, nil
 }
 
@@ -148,7 +150,7 @@ func (s *persistentVolumeClaimSyncer) Sync(ctx *synccontext.SyncContext, pObj cl
 	}
 
 	// forward update
-	newPvc, err := s.translateUpdate(ctx, pPvc, vPvc)
+	newPvc, err := s.translateUpdate(pPvc, vPvc)
 	if err != nil {
 		return ctrl.Result{}, err
 	} else if newPvc != nil {

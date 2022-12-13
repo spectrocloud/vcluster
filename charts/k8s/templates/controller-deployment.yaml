@@ -33,9 +33,16 @@ spec:
       release: {{ .Release.Name }}
   template:
     metadata:
+  {{- if .Values.controller.podAnnotations }}
+      annotations:
+{{ toYaml .Values.controller.podAnnotations | indent 8 }}
+  {{- end }}
       labels:
         app: vcluster-controller
         release: {{ .Release.Name }}
+      {{- range $k, $v := .Values.controller.podLabels }}
+        {{ $k }}: {{ $v | quote }}
+      {{- end }}
     spec:
       terminationGracePeriodSeconds: 10
       {{- if .Values.controller.affinity }}
@@ -80,8 +87,6 @@ spec:
       {{- end }}
       nodeSelector:
 {{ toYaml .Values.controller.nodeSelector | indent 8 }}
-      affinity:
-{{ toYaml .Values.controller.affinity | indent 8 }}
       tolerations:
 {{ toYaml .Values.controller.tolerations | indent 8 }}
       automountServiceAccountToken: false
@@ -113,9 +118,9 @@ spec:
           - '--cluster-signing-cert-file=/run/config/pki/ca.crt'
           - '--cluster-signing-key-file=/run/config/pki/ca.key'
           {{- if not .Values.sync.nodes.enableScheduler }}
-          - '--controllers=*,-nodeipam,-nodelifecycle,-persistentvolume-binder,-attachdetach,-persistentvolume-expander,-cloud-node-lifecycle'
+          - '--controllers=*,-nodeipam,-nodelifecycle,-persistentvolume-binder,-attachdetach,-persistentvolume-expander,-cloud-node-lifecycle,-ttl'
           {{- else }}
-          - '--controllers=*,-nodeipam,-persistentvolume-binder,-attachdetach,-persistentvolume-expander,-cloud-node-lifecycle'
+          - '--controllers=*,-nodeipam,-persistentvolume-binder,-attachdetach,-persistentvolume-expander,-cloud-node-lifecycle,-ttl'
           - '--node-monitor-grace-period=1h'
           - '--node-monitor-period=1h'
           {{- end }}

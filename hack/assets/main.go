@@ -2,12 +2,14 @@ package main
 
 import (
 	"fmt"
-	"github.com/loft-sh/vcluster/pkg/constants"
 	"os"
 	"strings"
 
-	"github.com/loft-sh/vcluster/pkg/controllers/resources/pods/translate"
-	"github.com/loft-sh/vcluster/pkg/helm/values"
+	syncercontext "github.com/loft-sh/vcluster/cmd/vcluster/context"
+
+	"github.com/loft-sh/vcluster/pkg/constants"
+
+	"github.com/loft-sh/utils/pkg/helm/values"
 )
 
 func main() {
@@ -15,7 +17,7 @@ func main() {
 
 	// loft
 	images = append(images, "loftsh/vcluster:"+cleanTag(os.Args[1]))
-	images = append(images, translate.HostsRewriteImage)
+	images = append(images, syncercontext.DefaultHostsRewriteImage)
 
 	// loop over k3s versions
 	for _, image := range values.K3SVersionMap {

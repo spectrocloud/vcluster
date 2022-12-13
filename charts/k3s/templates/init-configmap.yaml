@@ -9,10 +9,14 @@ metadata:
     chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
     release: "{{ .Release.Name }}"
     heritage: "{{ .Release.Service }}"
+  {{- if .Values.globalAnnotations }}
+  annotations:
+{{ toYaml .Values.globalAnnotations | indent 4 }}
+  {{- end }}
 data:
   manifests: |-
     {{ .Values.init.manifests | nindent 4 | trim }}
-    {{- tpl .Values.init.manifestsTemplate $ | nindent 4 | trim }}
+    {{ tpl .Values.init.manifestsTemplate $ | nindent 4 | trim }}
   {{- if .Values.init.helm }}
   charts: |-
   {{- range .Values.init.helm }}
@@ -33,9 +37,10 @@ data:
       {{- if .insecure }}
       insecure: true
       {{- end}}
-      {{- if .values }}
+      {{- if or .values .valuesTemplate }}
       values: |-
-        {{ .values | nindent 4 | trim }}
+        {{ (.values | default "") | nindent 8 | trim }}
+        {{ tpl (.valuesTemplate | default "") $ | nindent 8 | trim }}
       {{- end}}
       {{- if .release }}
       timeout: {{ .timeout | default "120s" | quote }}

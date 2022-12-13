@@ -33,9 +33,16 @@ spec:
       release: {{ .Release.Name }}
   template:
     metadata:
+  {{- if .Values.api.podAnnotations }}
+      annotations:
+{{ toYaml .Values.api.podAnnotations | indent 8 }}
+  {{- end }}
       labels:
         app: vcluster-api
         release: {{ .Release.Name }}
+      {{- range $k, $v := .Values.api.podLabels }}
+        {{ $k }}: {{ $v | quote }}
+      {{- end }}
     spec:
       terminationGracePeriodSeconds: 10
       {{- if .Values.api.affinity }}
@@ -80,8 +87,6 @@ spec:
       {{- end }}
       nodeSelector:
 {{ toYaml .Values.api.nodeSelector | indent 8 }}
-      affinity:
-{{ toYaml .Values.api.affinity | indent 8 }}
       tolerations:
 {{ toYaml .Values.api.tolerations | indent 8 }}
       automountServiceAccountToken: false

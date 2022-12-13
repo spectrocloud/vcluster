@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"os"
 	"time"
@@ -23,7 +22,6 @@ import (
 	"github.com/loft-sh/vcluster/pkg/controllers"
 	"github.com/loft-sh/vcluster/pkg/controllers/resources/nodes"
 	"github.com/loft-sh/vcluster/pkg/controllers/resources/nodes/nodeservice"
-	translatepods "github.com/loft-sh/vcluster/pkg/controllers/resources/pods/translate"
 	"github.com/loft-sh/vcluster/pkg/controllers/resources/services"
 	"github.com/loft-sh/vcluster/pkg/coredns"
 	"github.com/loft-sh/vcluster/pkg/leaderelection"
@@ -87,70 +85,7 @@ func NewStartCommand() *cobra.Command {
 			return ExecuteStart(options)
 		},
 	}
-
-	cmd.Flags().StringVar(&options.KubeConfigContextName, "kube-config-context-name", "", "If set, will override the context name of the generated virtual cluster kube config with this name")
-	cmd.Flags().StringSliceVar(&options.Controllers, "sync", []string{}, "A list of sync controllers to enable. 'foo' enables the sync controller named 'foo', '-foo' disables the sync controller named 'foo'")
-	cmd.Flags().StringVar(&options.RequestHeaderCaCert, "request-header-ca-cert", "/data/server/tls/request-header-ca.crt", "The path to the request header ca certificate")
-	cmd.Flags().StringVar(&options.ClientCaCert, "client-ca-cert", "/data/server/tls/client-ca.crt", "The path to the client ca certificate")
-	cmd.Flags().StringVar(&options.ServerCaCert, "server-ca-cert", "/data/server/tls/server-ca.crt", "The path to the server ca certificate")
-	cmd.Flags().StringVar(&options.ServerCaKey, "server-ca-key", "/data/server/tls/server-ca.key", "The path to the server ca key")
-	cmd.Flags().StringVar(&options.KubeConfigPath, "kube-config", "/data/server/cred/admin.kubeconfig", "The path to the virtual cluster admin kube config")
-	cmd.Flags().StringSliceVar(&options.TLSSANs, "tls-san", []string{}, "Add additional hostname or IP as a Subject Alternative Name in the TLS cert")
-
-	cmd.Flags().StringVar(&options.KubeConfigSecret, "out-kube-config-secret", "", "If specified, the virtual cluster will write the generated kube config to the given secret")
-	cmd.Flags().StringVar(&options.KubeConfigSecretNamespace, "out-kube-config-secret-namespace", "", "If specified, the virtual cluster will write the generated kube config in the given namespace")
-	cmd.Flags().StringVar(&options.KubeConfigServer, "out-kube-config-server", "", "If specified, the virtual cluster will use this server for the generated kube config (e.g. https://my-vcluster.domain.com)")
-
-	cmd.Flags().StringVar(&options.TargetNamespace, "target-namespace", "", "The namespace to run the virtual cluster in (defaults to current namespace)")
-	cmd.Flags().StringVar(&options.ServiceName, "service-name", "", "The service name where the vcluster proxy will be available")
-	cmd.Flags().BoolVar(&options.SetOwner, "set-owner", true, "If true, will set the same owner the currently running syncer pod has on the synced resources")
-
-	cmd.Flags().StringVar(&options.Name, "name", "", "The name of the virtual cluster")
-	cmd.Flags().StringVar(&options.BindAddress, "bind-address", "0.0.0.0", "The address to bind the server to")
-	cmd.Flags().IntVar(&options.Port, "port", 8443, "The port to bind to")
-
-	cmd.Flags().BoolVar(&options.SyncAllNodes, "sync-all-nodes", false, "If enabled and --fake-nodes is false, the virtual cluster will sync all nodes instead of only the needed ones")
-	cmd.Flags().BoolVar(&options.EnableScheduler, "enable-scheduler", false, "If enabled, will expect a scheduler running in the virtual cluster")
-	cmd.Flags().BoolVar(&options.DisableFakeKubelets, "disable-fake-kubelets", false, "If disabled, the virtual cluster will not create fake kubelet endpoints to support metrics-servers")
-
-	cmd.Flags().StringSliceVar(&options.TranslateImages, "translate-image", []string{}, "Translates image names from the virtual pod to the physical pod (e.g. coredns/coredns=mirror.io/coredns/coredns)")
-	cmd.Flags().BoolVar(&options.EnforceNodeSelector, "enforce-node-selector", true, "If enabled and --node-selector is set then the virtual cluster will ensure that no pods are scheduled outside of the node selector")
-	cmd.Flags().StringSliceVar(&options.Tolerations, "enforce-toleration", []string{}, "If set will apply the provided tolerations to all pods in the vcluster")
-	cmd.Flags().StringVar(&options.NodeSelector, "node-selector", "", "If nodes sync is enabled, nodes with the given node selector will be synced to the virtual cluster. If fake nodes are used, and --enforce-node-selector flag is set, then vcluster will ensure that no pods are scheduled outside of the node selector.")
-	cmd.Flags().StringVar(&options.ServiceAccount, "service-account", "", "If set, will set this host service account on the synced pods")
-
-	cmd.Flags().BoolVar(&options.OverrideHosts, "override-hosts", true, "If enabled, vcluster will override a containers /etc/hosts file if there is a subdomain specified for the pod (spec.subdomain).")
-	cmd.Flags().StringVar(&options.OverrideHostsContainerImage, "override-hosts-container-image", translatepods.HostsRewriteImage, "The image for the init container that is used for creating the override hosts file.")
-
-	cmd.Flags().StringVar(&options.ClusterDomain, "cluster-domain", "cluster.local", "The cluster domain ending that should be used for the virtual cluster")
-
-	cmd.Flags().BoolVar(&options.LeaderElect, "leader-elect", false, "If enabled, syncer will use leader election")
-	cmd.Flags().Int64Var(&options.LeaseDuration, "lease-duration", 60, "Lease duration of the leader election in seconds")
-	cmd.Flags().Int64Var(&options.RenewDeadline, "renew-deadline", 40, "Renew deadline of the leader election in seconds")
-	cmd.Flags().Int64Var(&options.RetryPeriod, "retry-period", 15, "Retry period of the leader election in seconds")
-
-	cmd.Flags().BoolVar(&options.DisablePlugins, "disable-plugins", false, "If enabled, vcluster will not load any plugins")
-	cmd.Flags().StringVar(&options.PluginListenAddress, "plugin-listen-address", "localhost:10099", "The plugin address to listen to. If this is changed, you'll need to configure your plugins to connect to the updated port")
-
-	cmd.Flags().StringVar(&options.DefaultImageRegistry, "default-image-registry", "", "This address will be prepended to all deployed system images by vcluster")
-
-	cmd.Flags().StringVar(&options.EnforcePodSecurityStandard, "enforce-pod-security-standard", "", "This can be set to privileged, baseline, restricted and vcluster would make sure during translation that these policies are enforced.")
-	cmd.Flags().StringSliceVar(&options.SyncLabels, "sync-labels", []string{}, "The specified labels will be synced to physical resources, in addition to their vcluster translated versions.")
-	cmd.Flags().StringSliceVar(&options.Plugins, "plugins", []string{}, "The plugins to wait for during startup")
-
-	cmd.Flags().StringSliceVar(&options.MapVirtualServices, "map-virtual-service", []string{}, "Maps a given service inside the virtual cluster to a service inside the host cluster. E.g. default/test=physical-service")
-	cmd.Flags().StringSliceVar(&options.MapHostServices, "map-host-service", []string{}, "Maps a given service inside the host cluster to a service inside the virtual cluster. E.g. other-namespace/my-service=my-vcluster-namespace/my-service")
-
-	// Deprecated Flags
-	cmd.Flags().BoolVar(&options.DeprecatedSyncNodeChanges, "sync-node-changes", false, "If enabled and --fake-nodes is false, the virtual cluster will proxy node updates from the virtual cluster to the host cluster. This is not recommended and should only be used if you know what you are doing.")
-	cmd.Flags().BoolVar(&options.DeprecatedUseFakeKubelets, "fake-kubelets", true, "DEPRECATED: use --disable-fake-kubelets instead")
-	cmd.Flags().BoolVar(&options.DeprecatedUseFakeNodes, "fake-nodes", true, "DEPRECATED: use --sync=-fake-nodes instead")
-	cmd.Flags().BoolVar(&options.DeprecatedUseFakePersistentVolumes, "fake-persistent-volumes", true, "DEPRECATED: use --sync=-fake-persistentvolumes instead")
-	cmd.Flags().BoolVar(&options.DeprecatedEnableStorageClasses, "enable-storage-classes", false, "DEPRECATED: use --sync=storageclasses instead")
-	cmd.Flags().BoolVar(&options.DeprecatedEnablePriorityClasses, "enable-priority-classes", false, "DEPRECATED: use --sync=priorityclasses instead")
-	cmd.Flags().StringVar(&options.DeprecatedSuffix, "suffix", "", "DEPRECATED: use --name instead")
-	cmd.Flags().StringVar(&options.DeprecatedOwningStatefulSet, "owning-statefulset", "", "DEPRECATED: use --set-owner instead")
-	cmd.Flags().StringVar(&options.DeprecatedDisableSyncResources, "disable-sync-resources", "", "DEPRECATED: use --sync instead")
+	context2.AddFlags(cmd.Flags(), options)
 
 	return cmd
 }
@@ -203,7 +138,7 @@ func ExecuteStart(options *context2.VirtualClusterOptions) error {
 	// wait until kube config is available
 	var clientConfig clientcmd.ClientConfig
 	err = wait.PollImmediate(time.Second, time.Hour, func() (bool, error) {
-		out, err := ioutil.ReadFile(options.KubeConfigPath)
+		out, err := os.ReadFile(options.KubeConfigPath)
 		if err != nil {
 			if os.IsNotExist(err) {
 				klog.Info("couldn't find virtual cluster kube-config, will retry in 1 seconds")
@@ -272,9 +207,16 @@ func ExecuteStart(options *context2.VirtualClusterOptions) error {
 	// set kubelet port
 	nodeservice.KubeletTargetPort = options.Port
 
-	// ensure target namespace
-	if options.TargetNamespace == "" {
-		options.TargetNamespace = currentNamespace
+	if options.MultiNamespaceMode {
+		// set options.TargetNamespace to empty because it will later be used in Manager
+		options.TargetNamespace = ""
+		translate.Default = translate.NewMultiNamespaceTranslator(currentNamespace)
+	} else {
+		// ensure target namespace
+		if options.TargetNamespace == "" {
+			options.TargetNamespace = currentNamespace
+		}
+		translate.Default = translate.NewSingleNamespaceTranslator(options.TargetNamespace)
 	}
 
 	virtualClusterConfig, err := clientConfig.ClientConfig()
@@ -310,7 +252,7 @@ func ExecuteStart(options *context2.VirtualClusterOptions) error {
 	klog.Info("Using physical cluster at " + inClusterConfig.Host)
 	localManager, err := ctrl.NewManager(inClusterConfig, ctrl.Options{
 		Scheme:             scheme,
-		MetricsBindAddress: "0",
+		MetricsBindAddress: options.HostMetricsBindAddress,
 		LeaderElection:     false,
 		Namespace:          options.TargetNamespace,
 		NewClient:          pluginhookclient.NewPhysicalPluginClientFactory(blockingcacheclient.NewCacheClient),
@@ -320,7 +262,7 @@ func ExecuteStart(options *context2.VirtualClusterOptions) error {
 	}
 	virtualClusterManager, err := ctrl.NewManager(virtualClusterConfig, ctrl.Options{
 		Scheme:             scheme,
-		MetricsBindAddress: "0",
+		MetricsBindAddress: options.VirtualMetricsBindAddress,
 		LeaderElection:     false,
 		NewClient:          pluginhookclient.NewVirtualPluginClientFactory(blockingcacheclient.NewCacheClient),
 	})
@@ -524,7 +466,7 @@ func createVClusterKubeConfig(config *api.Config, options *context2.VirtualClust
 	for i := range config.Clusters {
 		// fill in data
 		if config.Clusters[i].CertificateAuthorityData == nil && config.Clusters[i].CertificateAuthority != "" {
-			o, err := ioutil.ReadFile(config.Clusters[i].CertificateAuthority)
+			o, err := os.ReadFile(config.Clusters[i].CertificateAuthority)
 			if err != nil {
 				return nil, err
 			}
@@ -544,7 +486,7 @@ func createVClusterKubeConfig(config *api.Config, options *context2.VirtualClust
 	for i := range config.AuthInfos {
 		// fill in data
 		if config.AuthInfos[i].ClientCertificateData == nil && config.AuthInfos[i].ClientCertificate != "" {
-			o, err := ioutil.ReadFile(config.AuthInfos[i].ClientCertificate)
+			o, err := os.ReadFile(config.AuthInfos[i].ClientCertificate)
 			if err != nil {
 				return nil, err
 			}
@@ -553,7 +495,7 @@ func createVClusterKubeConfig(config *api.Config, options *context2.VirtualClust
 			config.AuthInfos[i].ClientCertificateData = o
 		}
 		if config.AuthInfos[i].ClientKeyData == nil && config.AuthInfos[i].ClientKey != "" {
-			o, err := ioutil.ReadFile(config.AuthInfos[i].ClientKey)
+			o, err := os.ReadFile(config.AuthInfos[i].ClientKey)
 			if err != nil {
 				return nil, err
 			}

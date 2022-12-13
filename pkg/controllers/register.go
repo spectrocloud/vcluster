@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/loft-sh/vcluster/cmd/vclusterctl/cmd"
+
 	"github.com/loft-sh/vcluster/pkg/controllers/servicesync"
 	"github.com/loft-sh/vcluster/pkg/helm"
 	"github.com/loft-sh/vcluster/pkg/plugin"
@@ -16,6 +18,11 @@ import (
 
 	"github.com/loft-sh/vcluster/pkg/controllers/k8sdefaultendpoint"
 	"github.com/loft-sh/vcluster/pkg/controllers/manifests"
+	"github.com/loft-sh/vcluster/pkg/controllers/resources/csidrivers"
+	"github.com/loft-sh/vcluster/pkg/controllers/resources/csinodes"
+	"github.com/loft-sh/vcluster/pkg/controllers/resources/csistoragecapacities"
+	"github.com/loft-sh/vcluster/pkg/controllers/resources/ingressclasses"
+	"github.com/loft-sh/vcluster/pkg/controllers/resources/namespaces"
 	"github.com/loft-sh/vcluster/pkg/controllers/resources/serviceaccounts"
 
 	"github.com/loft-sh/vcluster/cmd/vcluster/context"
@@ -47,23 +54,28 @@ import (
 )
 
 var ResourceControllers = map[string][]func(*synccontext.RegisterContext) (syncer.Object, error){
-	"services":               newControllers(services.New),
-	"configmaps":             newControllers(configmaps.New),
-	"secrets":                newControllers(secrets.New),
-	"endpoints":              newControllers(endpoints.New),
-	"pods":                   newControllers(pods.New),
-	"events":                 newControllers(events.New),
-	"persistentvolumeclaims": newControllers(persistentvolumeclaims.New),
-	"ingresses":              newControllers(ingresses.New),
-	"storageclasses":         newControllers(storageclasses.New),
-	"legacy-storageclasses":  newControllers(storageclasses.NewLegacy),
-	"priorityclasses":        newControllers(priorityclasses.New),
-	"nodes,fake-nodes":       newControllers(nodes.New),
-	"poddisruptionbudgets":   newControllers(poddisruptionbudgets.New),
-	"networkpolicies":        newControllers(networkpolicies.New),
-	"volumesnapshots":        newControllers(volumesnapshotclasses.New, volumesnapshots.New, volumesnapshotcontents.New),
-	"serviceaccounts":        newControllers(serviceaccounts.New),
-	"persistentvolumes,fake-persistentvolumes": newControllers(persistentvolumes.New),
+	"services":               {services.New},
+	"configmaps":             {configmaps.New},
+	"secrets":                {secrets.New},
+	"endpoints":              {endpoints.New},
+	"pods":                   {pods.New},
+	"events":                 {events.New},
+	"persistentvolumeclaims": {persistentvolumeclaims.New},
+	"ingresses":              {ingresses.New},
+	"ingressclasses":         {ingressclasses.New},
+	"storageclasses":         {storageclasses.New},
+	"hoststorageclasses":     {storageclasses.NewHostStorageClassSyncer},
+	"priorityclasses":        {priorityclasses.New},
+	"nodes,fake-nodes":       {nodes.New},
+	"poddisruptionbudgets":   {poddisruptionbudgets.New},
+	"networkpolicies":        {networkpolicies.New},
+	"volumesnapshots":        {volumesnapshotclasses.New, volumesnapshots.New, volumesnapshotcontents.New},
+	"serviceaccounts":        {serviceaccounts.New},
+	"csinodes":               {csinodes.New},
+	"csidrivers":             {csidrivers.New},
+	"csistoragecapacities":   {csistoragecapacities.New},
+	"namespaces":             {namespaces.New},
+	"persistentvolumes,fake-persistentvolumes": {persistentvolumes.New},
 }
 
 func Create(ctx *context.ControllerContext) ([]syncer.Object, error) {
@@ -75,7 +87,7 @@ func Create(ctx *context.ControllerContext) ([]syncer.Object, error) {
 		for _, controllerNew := range v {
 			controllers := strings.Split(k, ",")
 			for _, controller := range controllers {
-				if ctx.Controllers[controller] {
+				if ctx.Controllers.Has(controller) {
 					loghelper.Infof("Start %s sync controller", controller)
 					ctrl, err := controllerNew(registerContext)
 					if err != nil {
@@ -229,12 +241,17 @@ func registerInitManifestsController(ctx *context.ControllerContext) error {
 		return err
 	}
 
+	helmBinaryPath, err := cmd.GetHelmBinaryPath(log.GetInstance())
+	if err != nil {
+		return err
+	}
+
 	controller := &manifests.InitManifestsConfigMapReconciler{
 		LocalClient:    currentNamespaceManager.GetClient(),
-		Log:            loghelper.New("initmanifests-controller"),
+		Log:            loghelper.New("init-manifests-controller"),
 		VirtualManager: ctx.VirtualManager,
 
-		HelmClient: helm.NewClient(&vConfigRaw, log.GetInstance()),
+		HelmClient: helm.NewClient(&vConfigRaw, log.GetInstance(), helmBinaryPath),
 	}
 
 	err = controller.SetupWithManager(currentNamespaceManager)
@@ -394,15 +411,10 @@ func ToRegisterContext(ctx *context.ControllerContext) *synccontext.RegisterCont
 		Options:     ctx.Options,
 		Controllers: ctx.Controllers,
 
-		TargetNamespace:        ctx.Options.TargetNamespace,
 		CurrentNamespace:       ctx.CurrentNamespace,
 		CurrentNamespaceClient: ctx.CurrentNamespaceClient,
 
 		VirtualManager:  ctx.VirtualManager,
 		PhysicalManager: ctx.LocalManager,
 	}
-}
-
-func newControllers(funcs ...func(*synccontext.RegisterContext) (syncer.Object, error)) []func(*synccontext.RegisterContext) (syncer.Object, error) {
-	return append([]func(*synccontext.RegisterContext) (syncer.Object, error){}, funcs...)
 }

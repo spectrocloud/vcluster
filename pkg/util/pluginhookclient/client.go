@@ -9,6 +9,7 @@ import (
 	"github.com/loft-sh/vcluster/pkg/util/loghelper"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
@@ -71,12 +72,12 @@ type Client struct {
 	scheme *runtime.Scheme
 }
 
-func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Object) error {
+func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 	if !plugin.DefaultManager.HasClientHooks() {
-		return c.Client.Get(ctx, key, obj)
+		return c.Client.Get(ctx, key, obj, opts...)
 	}
 
-	err := c.Client.Get(ctx, key, obj)
+	err := c.Client.Get(ctx, key, obj, opts...)
 	if err != nil {
 		return err
 	}
@@ -96,7 +97,7 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 	}
 	gvk.Kind = strings.TrimSuffix(gvk.Kind, "List")
 	clientHooks := plugin.DefaultManager.ClientHooksFor(plugin.VersionKindType{
-		ApiVersion: gvk.GroupVersion().String(),
+		APIVersion: gvk.GroupVersion().String(),
 		Kind:       gvk.Kind,
 		Type:       "Get" + c.suffix,
 	})
@@ -229,7 +230,7 @@ func executeClientHooksFor(ctx context.Context, obj client.Object, hookType stri
 
 	apiVersion, kind := gvk.ToAPIVersionAndKind()
 	versionKindType := plugin.VersionKindType{
-		ApiVersion: apiVersion,
+		APIVersion: apiVersion,
 		Kind:       kind,
 		Type:       hookType,
 	}
@@ -257,18 +258,20 @@ func executeClientHooksFor(ctx context.Context, obj client.Object, hookType stri
 }
 
 func mutateObject(ctx context.Context, versionKindType plugin.VersionKindType, obj []byte, plugin *plugin.Plugin) ([]byte, error) {
-	conn, err := grpc.Dial(plugin.Address, grpc.WithInsecure())
+	conn, err := grpc.Dial(plugin.Address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, fmt.Errorf("error dialing plugin %s: %v", plugin.Name, err)
 	}
-	defer conn.Close()
+	defer func(conn *grpc.ClientConn) {
+		_ = conn.Close()
+	}(conn)
 
 	ctx, cancel := context.WithTimeout(ctx, time.Second*10)
 	defer cancel()
 
-	loghelper.New("mutate").Debugf("calling plugin %s to mutate object %s %s", plugin.Name, versionKindType.ApiVersion, versionKindType.Kind)
+	loghelper.New("mutate").Debugf("calling plugin %s to mutate object %s %s", plugin.Name, versionKindType.APIVersion, versionKindType.Kind)
 	mutateResult, err := remote.NewPluginClient(conn).Mutate(ctx, &remote.MutateRequest{
-		ApiVersion: versionKindType.ApiVersion,
+		ApiVersion: versionKindType.APIVersion,
 		Kind:       versionKindType.Kind,
 		Object:     string(obj),
 		Type:       versionKindType.Type,

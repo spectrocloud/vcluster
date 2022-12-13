@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"context"
+	"embed"
+	"encoding/base64"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,13 +20,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 
+	"github.com/loft-sh/utils/pkg/helm/values"
 	"github.com/loft-sh/vcluster/cmd/vclusterctl/cmd/app/create"
-	"github.com/loft-sh/vcluster/pkg/helm/values"
 	"github.com/loft-sh/vcluster/pkg/upgrade"
 	"github.com/loft-sh/vcluster/pkg/util"
 	"github.com/loft-sh/vcluster/pkg/util/servicecidr"
 	"golang.org/x/mod/semver"
 
+	helmUtils "github.com/loft-sh/utils/pkg/helm"
 	"github.com/loft-sh/vcluster/cmd/vclusterctl/flags"
 	"github.com/loft-sh/vcluster/cmd/vclusterctl/log"
 	"github.com/loft-sh/vcluster/pkg/helm"
@@ -35,6 +39,10 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
+
+//go:generate ../../../hack/embed-charts.sh
+//go:embed charts/*.tgz
+var Charts embed.FS
 
 var (
 	AllowedDistros              = []string{"k3s", "k0s", "k8s", "eks"}
@@ -125,7 +133,20 @@ func validateDeprecated(createOptions *create.CreateOptions, log log.Logger) {
 
 // Run executes the functionality
 func (cmd *CreateCmd) Run(args []string) error {
-	err := cmd.prepare(args[0])
+	helmBinaryPath, err := GetHelmBinaryPath(cmd.log)
+	if err != nil {
+		return err
+	}
+
+	output, err := exec.Command(helmBinaryPath, "version", "--client").CombinedOutput()
+	if errHelm := CheckHelmVersion(string(output)); errHelm != nil {
+		return errHelm
+	}
+	if err != nil {
+		return err
+	}
+
+	err = cmd.prepare(args[0])
 	if err != nil {
 		return err
 	}
@@ -134,16 +155,6 @@ func (cmd *CreateCmd) Run(args []string) error {
 	kubernetesVersion, err := cmd.getKubernetesVersion()
 	if err != nil {
 		return err
-	}
-
-	vclusterExistsInNamespace, err := cmd.vclusterExistsInNamespace()
-	if err != nil {
-		cmd.log.Errorf("error while listing clusters to check if the vcluster is already present in the namespace : %s", err)
-		return err
-	}
-	if vclusterExistsInNamespace {
-		cmd.log.Errorf("another vcluster is already present in %s namespace, please try another namespace.", cmd.Namespace)
-		return nil
 	}
 
 	// load the default values
@@ -155,6 +166,42 @@ func (cmd *CreateCmd) Run(args []string) error {
 	if err != nil {
 		return err
 	}
+
+	var newExtraValues []string
+	for _, value := range cmd.ExtraValues {
+		decodedString, err := getBase64DecodedString(value)
+		// ignore decoding errors and treat it as non-base64 string
+		if err != nil {
+			newExtraValues = append(newExtraValues, value)
+			continue
+		}
+
+		// write a temporary values file
+		tempFile, err := os.CreateTemp("", "")
+		tempValuesFile := tempFile.Name()
+		if err != nil {
+			return errors.Wrap(err, "create temp values file")
+		}
+		defer func(name string) {
+			_ = os.Remove(name)
+		}(tempValuesFile)
+
+		_, err = tempFile.Write([]byte(decodedString))
+		if err != nil {
+			return errors.Wrap(err, "write values to temp values file")
+		}
+
+		err = tempFile.Close()
+		if err != nil {
+			return errors.Wrap(err, "close temp values file")
+		}
+		// setting new file to extraValues slice to process it further.
+		newExtraValues = append(newExtraValues, tempValuesFile)
+	}
+
+	// resetting this as the base64 encoded strings should be removed and only valid file names should be kept.
+	cmd.ExtraValues = newExtraValues
+
 	if cmd.ReleaseValues != "" {
 		cmd.ExtraValues = append(cmd.ExtraValues, cmd.ReleaseValues)
 	}
@@ -182,7 +229,7 @@ func (cmd *CreateCmd) Run(args []string) error {
 	}
 
 	// we have to upgrade / install the chart
-	err = cmd.deployChart(args[0], chartValues)
+	err = cmd.deployChart(args[0], chartValues, helmBinaryPath)
 	if err != nil {
 		return err
 	}
@@ -206,10 +253,19 @@ func (cmd *CreateCmd) Run(args []string) error {
 			cmd.log.Donef("Successfully created virtual cluster %s in namespace %s. \n- Use 'vcluster connect %s --namespace %s' to access the virtual cluster\n- Use `vcluster connect %s --namespace %s -- kubectl get ns` to run a command directly within the vcluster", args[0], cmd.Namespace, args[0], cmd.Namespace, args[0], cmd.Namespace)
 		}
 	}
+
 	return nil
 }
 
-func (cmd *CreateCmd) deployChart(vClusterName, chartValues string) error {
+func getBase64DecodedString(values string) (string, error) {
+	strDecoded, err := base64.StdEncoding.DecodeString(values)
+	if err != nil {
+		return "", err
+	}
+	return string(strDecoded), nil
+}
+
+func (cmd *CreateCmd) deployChart(vClusterName, chartValues, helmExecutablePath string) error {
 	// check if there is a vcluster directory already
 	workDir, err := os.Getwd()
 	if err != nil {
@@ -219,16 +275,44 @@ func (cmd *CreateCmd) deployChart(vClusterName, chartValues string) error {
 		return fmt.Errorf("aborting vcluster creation. Current working directory contains a file or a directory with the name equal to the vcluster chart name - \"%s\". Please execute vcluster create command from a directory that doesn't contain a file or directory named \"%s\"", cmd.ChartName, cmd.ChartName)
 	}
 
-	// rewrite chart location, this is an optimization to avoid
-	// downloading the whole index.yaml and parsing it
-	if cmd.LocalChartDir == "" && cmd.ChartVersion != "" && cmd.ChartRepo == LoftChartRepo {
-		if cmd.ChartVersion[0] == 'v' {
-			cmd.ChartVersion = cmd.ChartVersion[1:]
-		}
+	if cmd.LocalChartDir == "" {
+		chartEmbedded := false
+		if cmd.ChartVersion == upgrade.GetVersion() { // use embedded chart if default version
+			embeddedChartName := fmt.Sprintf("%s-%s.tgz", cmd.ChartName, upgrade.GetVersion())
+			// not using filepath.Join because the embed.FS separator is not OS specific
+			embeddedChartPath := fmt.Sprintf("charts/%s", embeddedChartName)
 
-		cmd.LocalChartDir = LoftChartRepo + "/charts/" + cmd.ChartName + "-" + cmd.ChartVersion + ".tgz"
-		cmd.ChartVersion = ""
-		cmd.ChartRepo = ""
+			embeddedChartFile, err := Charts.ReadFile(embeddedChartPath)
+			if err != nil && errors.Is(err, fs.ErrNotExist) {
+				cmd.log.Infof("Chart not embedded: %q, pulling from helm repository.", err)
+			} else if err != nil {
+				cmd.log.Errorf("Unexpected error while accessing embedded file: %q", err)
+			} else {
+				temp, err := os.CreateTemp("", fmt.Sprintf("%s%s", embeddedChartName, "-"))
+				if err != nil {
+					cmd.log.Errorf("Error creating temp file: %v", err)
+				} else {
+					defer temp.Close()
+					defer os.Remove(temp.Name())
+					_, err = temp.Write(embeddedChartFile)
+					if err != nil {
+						cmd.log.Errorf("Error writing package file to temp: %v", err)
+					}
+					cmd.LocalChartDir = temp.Name()
+					chartEmbedded = true
+					cmd.log.Debugf("Using embedded chart: %q", embeddedChartName)
+				}
+
+			}
+		}
+		// rewrite chart location, this is an optimization to avoid
+		// downloading the whole index.yaml and parsing it
+		if !chartEmbedded && cmd.ChartRepo == LoftChartRepo { // specify versioned path to repo url
+			cmd.ChartVersion = strings.TrimPrefix(cmd.ChartVersion, "v")
+			cmd.LocalChartDir = LoftChartRepo + "/charts/" + cmd.ChartName + "-" + cmd.ChartVersion + ".tgz"
+			cmd.ChartVersion = ""
+			cmd.ChartRepo = ""
+		}
 	}
 
 	if cmd.Upgrade {
@@ -239,7 +323,7 @@ func (cmd *CreateCmd) deployChart(vClusterName, chartValues string) error {
 
 	// we have to upgrade / install the chart
 	ctx := context.Background()
-	err = helm.NewClient(&cmd.rawConfig, cmd.log).Upgrade(ctx, vClusterName, cmd.Namespace, helm.UpgradeOptions{
+	err = helm.NewClient(&cmd.rawConfig, cmd.log, helmExecutablePath).Upgrade(ctx, vClusterName, cmd.Namespace, helm.UpgradeOptions{
 		Chart:       cmd.ChartName,
 		Path:        cmd.LocalChartDir,
 		Repo:        cmd.ChartRepo,
@@ -254,7 +338,7 @@ func (cmd *CreateCmd) deployChart(vClusterName, chartValues string) error {
 	return nil
 }
 
-func (cmd *CreateCmd) ToChartOptions(kubernetesVersion *version.Info) (*helm.ChartOptions, error) {
+func (cmd *CreateCmd) ToChartOptions(kubernetesVersion *version.Info) (*helmUtils.ChartOptions, error) {
 	if !util.Contains(cmd.Distro, AllowedDistros) {
 		return nil, fmt.Errorf("unsupported distro %s, please select one of: %s", cmd.Distro, strings.Join(AllowedDistros, ", "))
 	}
@@ -270,7 +354,7 @@ func (cmd *CreateCmd) ToChartOptions(kubernetesVersion *version.Info) (*helm.Cha
 		cmd.localCluster = true
 	}
 
-	return &helm.ChartOptions{
+	return &helmUtils.ChartOptions{
 		ChartName:          cmd.ChartName,
 		ChartRepo:          cmd.ChartRepo,
 		ChartVersion:       cmd.ChartVersion,
@@ -282,22 +366,14 @@ func (cmd *CreateCmd) ToChartOptions(kubernetesVersion *version.Info) (*helm.Cha
 		NodePort:           cmd.localCluster,
 		K3SImage:           cmd.K3SImage,
 		Isolate:            cmd.Isolate,
-		KubernetesVersion:  kubernetesVersion,
+		KubernetesVersion: helmUtils.Version{
+			Major: kubernetesVersion.Major,
+			Minor: kubernetesVersion.Minor,
+		},
 	}, nil
 }
 
 func (cmd *CreateCmd) prepare(vClusterName string) error {
-	// test for helm
-	helmExecutablePath, err := exec.LookPath("helm")
-	if err != nil {
-		return fmt.Errorf("seems like helm is not installed. Helm is required for the creation of a virtual cluster. Please visit https://helm.sh/docs/intro/install/ for install instructions")
-	}
-
-	output, err := exec.Command(helmExecutablePath, "version").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("seems like there are issues with your helm client: \n\n%s", output)
-	}
-
 	// first load the kube config
 	kubeClientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(clientcmd.NewDefaultClientConfigLoadingRules(), &clientcmd.ConfigOverrides{
 		CurrentContext: cmd.Context,
@@ -456,9 +532,14 @@ func (cmd *CreateCmd) getKubernetesVersion() (*version.Info, error) {
 			cmd.log.Warnf("currently we only support major.minor version (%s) and not the patch version (%s)", majorMinorVer, cmd.KubernetesVersion)
 		}
 
-		kubernetesVersion, err = values.ParseKubernetesVersionInfo(majorMinorVer)
+		parsedVersion, err := values.ParseKubernetesVersionInfo(majorMinorVer)
 		if err != nil {
 			return nil, err
+		}
+
+		kubernetesVersion = &version.Info{
+			Major: parsedVersion.Major,
+			Minor: parsedVersion.Minor,
 		}
 	}
 
@@ -470,17 +551,4 @@ func (cmd *CreateCmd) getKubernetesVersion() (*version.Info, error) {
 	}
 
 	return kubernetesVersion, nil
-}
-
-func (cmd *CreateCmd) vclusterExistsInNamespace() (bool, error) {
-	vClusters, err := find.ListVClusters(cmd.Context, "", cmd.Namespace)
-	if err != nil {
-		return false, err
-	}
-	for _, cluster := range vClusters {
-		if cluster.Namespace == cmd.Namespace {
-			return true, nil
-		}
-	}
-	return false, nil
 }

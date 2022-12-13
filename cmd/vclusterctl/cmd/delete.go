@@ -3,12 +3,13 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os/exec"
+
 	"github.com/loft-sh/vcluster/cmd/vclusterctl/cmd/app/localkubernetes"
 	"github.com/loft-sh/vcluster/cmd/vclusterctl/cmd/find"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
-	"os/exec"
 
 	"github.com/pkg/errors"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
@@ -43,7 +44,7 @@ func NewDeleteCmd(globalFlags *flags.GlobalFlags) *cobra.Command {
 	}
 
 	cobraCmd := &cobra.Command{
-		Use:   "delete",
+		Use:   "delete [flags] vcluster_name",
 		Short: "Deletes a virtual cluster",
 		Long: `
 #######################################################
@@ -55,7 +56,9 @@ Example:
 vcluster delete test --namespace test
 #######################################################
 	`,
-		Args: cobra.ExactArgs(1),
+		Args:              cobra.ExactArgs(1),
+		Aliases:           []string{"rm"},
+		ValidArgsFunction: newValidVClusterNameFunc(globalFlags),
 		RunE: func(cobraCmd *cobra.Command, args []string) error {
 			return cmd.Run(cobraCmd, args)
 		},
@@ -70,12 +73,15 @@ vcluster delete test --namespace test
 // Run executes the functionality
 func (cmd *DeleteCmd) Run(cobraCmd *cobra.Command, args []string) error {
 	// test for helm
-	_, err := exec.LookPath("helm")
+	helmBinaryPath, err := GetHelmBinaryPath(cmd.log)
 	if err != nil {
-		return fmt.Errorf("seems like helm is not installed. Helm is required for the deletion of a virtual cluster. Please visit https://helm.sh/docs/intro/install/ for install instructions")
+		return err
 	}
 
-	output, err := exec.Command("helm", "version").CombinedOutput()
+	output, err := exec.Command(helmBinaryPath, "version", "--client").CombinedOutput()
+	if errHelm := CheckHelmVersion(string(output)); errHelm != nil {
+		return errHelm
+	}
 	if err != nil {
 		return fmt.Errorf("seems like there are issues with your helm client: \n\n%s", output)
 	}
@@ -90,7 +96,7 @@ func (cmd *DeleteCmd) Run(cobraCmd *cobra.Command, args []string) error {
 	if cmd.AutoDeleteNamespace {
 		namespace, err := cmd.kubeClient.CoreV1().Namespaces().Get(context.TODO(), cmd.Namespace, metav1.GetOptions{})
 		if err != nil {
-			cmd.log.Debugf("Error retrieving vcluster namspace: %v", err)
+			cmd.log.Debugf("Error retrieving vcluster namespace: %v", err)
 		} else if namespace != nil && namespace.Annotations != nil && namespace.Annotations[CreatedByVClusterAnnotation] == "true" {
 			cmd.DeleteNamespace = true
 		}
@@ -98,7 +104,7 @@ func (cmd *DeleteCmd) Run(cobraCmd *cobra.Command, args []string) error {
 
 	// we have to delete the chart
 	cmd.log.Infof("Delete vcluster %s...", args[0])
-	err = helm.NewClient(cmd.rawConfig, cmd.log).Delete(args[0], cmd.Namespace)
+	err = helm.NewClient(cmd.rawConfig, cmd.log, helmBinaryPath).Delete(args[0], cmd.Namespace)
 	if err != nil {
 		return err
 	}
@@ -127,8 +133,8 @@ func (cmd *DeleteCmd) Run(cobraCmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if len(vClusters) > 1 {
-		// set to false if there are more than 1 virtual clusters in the same namespace
+	if len(vClusters) > 0 {
+		// set to false if there are any virtual clusters running in the same namespace. The vcluster supposed to be deleted by the command has been deleted by now and hence the check should be greater than 0
 		cmd.DeleteNamespace = false
 	}
 

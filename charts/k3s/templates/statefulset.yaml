@@ -1,5 +1,6 @@
+{{- $kind := include "vcluster.k3s.workloadKind" . -}}
 apiVersion: apps/v1
-kind: StatefulSet
+kind: {{ $kind }}
 metadata:
   name: {{ .Release.Name }}
   namespace: {{ .Release.Namespace }}
@@ -11,19 +12,36 @@ metadata:
 {{- if .Values.labels }}
 {{ toYaml .Values.labels | indent 4 }}
 {{- end }}
-  {{- if .Values.annotations }}
+{{- $annotations := merge .Values.annotations .Values.globalAnnotations }}
+  {{- if $annotations }}
   annotations:
-{{ toYaml .Values.annotations | indent 4 }}
+{{ toYaml $annotations | indent 4 }}
   {{- end }}
 spec:
+{{- if (eq $kind "StatefulSet") }}
   serviceName: {{ .Release.Name }}-headless
+{{- end }}
   replicas: {{ .Values.replicas }}
+{{- if (and (eq $kind "Deployment") (.Values.enableHA)) }}
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+    {{- if (eq (int .Values.replicas) 1) }}
+      maxUnavailable: 0
+    {{- else }}
+      maxUnavailable: 1
+    {{- end }}
+    type: RollingUpdate
+{{- end }}
   selector:
     matchLabels:
       app: vcluster
       release: {{ .Release.Name }}
-  {{- if .Values.storage.persistence }}
-  {{- if not .Values.storage.volumeClaimTemplates }}
+  {{- if (eq $kind "StatefulSet") }}
+  {{- if (hasKey .Values "volumeClaimTemplates") }}
+  volumeClaimTemplates:
+{{ toYaml .Values.volumeClaimTemplates | indent 4 }}
+  {{- else if .Values.storage.persistence }}
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -33,22 +51,60 @@ spec:
         resources:
           requests:
             storage: {{ .Values.storage.size }}
-  {{- else }}
-  volumeClaimTemplates:
-{{ toYaml .Values.volumeClaimTemplates | indent 4 }}
   {{- end }}
   {{- end }}
   template:
     metadata:
+  {{- if .Values.podAnnotations }}
+      annotations:
+{{ toYaml .Values.podAnnotations | indent 8 }}
+  {{- end }}
       labels:
         app: vcluster
         release: {{ .Release.Name }}
+      {{- range $k, $v := .Values.podLabels }}
+        {{ $k }}: {{ $v | quote }}
+      {{- end }}
     spec:
       terminationGracePeriodSeconds: 10
       nodeSelector:
 {{ toYaml .Values.nodeSelector | indent 8 }}
+      {{- if .Values.affinity }}
       affinity:
 {{ toYaml .Values.affinity | indent 8 }}
+      {{- else if .Values.enableHA }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          # if possible avoid scheduling more than one pod on one node
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - vcluster
+                - key: release
+                  operator: In
+                  values:
+                  - {{ .Release.Name }}
+              topologyKey: "kubernetes.io/hostname"
+          # if possible avoid scheduling pod onto node that is in the same zone as one or more vcluster pods are running
+          - weight: 50
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - vcluster
+                - key: release
+                  operator: In
+                  values:
+                  - {{ .Release.Name }}
+              topologyKey: topology.kubernetes.io/zone
+      {{- end }}
       tolerations:
 {{ toYaml .Values.tolerations | indent 8 }}
       {{- if .Values.serviceAccount.name }}
@@ -103,10 +159,10 @@ spec:
           {{- end }}
           {{- if not .Values.sync.nodes.enableScheduler }}
             --disable-scheduler
-            --kube-controller-manager-arg=controllers=*,-nodeipam,-nodelifecycle,-persistentvolume-binder,-attachdetach,-persistentvolume-expander,-cloud-node-lifecycle
+            --kube-controller-manager-arg=controllers=*,-nodeipam,-nodelifecycle,-persistentvolume-binder,-attachdetach,-persistentvolume-expander,-cloud-node-lifecycle,-ttl
             --kube-apiserver-arg=endpoint-reconciler-type=none
           {{- else }}
-            --kube-controller-manager-arg=controllers=*,-nodeipam,-persistentvolume-binder,-attachdetach,-persistentvolume-expander,-cloud-node-lifecycle
+            --kube-controller-manager-arg=controllers=*,-nodeipam,-persistentvolume-binder,-attachdetach,-persistentvolume-expander,-cloud-node-lifecycle,-ttl
             --kube-apiserver-arg=endpoint-reconciler-type=none
             --kube-controller-manager-arg=node-monitor-grace-period=1h
             --kube-controller-manager-arg=node-monitor-period=1h
@@ -123,6 +179,13 @@ spec:
         env:
           {{- if .Values.vcluster.env }}
 {{ toYaml .Values.vcluster.env | indent 10 }}
+          {{- end }}
+          {{- if .Values.enableHA }}
+          - name: K3S_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "vcluster.k3s.tokenSecretName" . | quote }}
+                key: {{ include "vcluster.k3s.serverTokenKey" . | quote }}
           {{- end }}
           {{- if not .Values.serviceCIDR }}
           - name: SERVICE_CIDR
@@ -174,6 +237,11 @@ spec:
           {{- if .Values.syncer.kubeConfigContextName }}
           - --kube-config-context-name={{ .Values.syncer.kubeConfigContextName }}
           {{- end }}
+          {{- if .Values.enableHA }}
+          - --leader-elect=true
+          {{- else }}
+          - --leader-elect=false
+          {{- end }}
           {{- if .Values.ingress.enabled }}
           - --tls-san={{ .Values.ingress.host }}
           {{- end }}
@@ -186,6 +254,12 @@ spec:
           {{- end }}
           {{- if .Values.sync.nodes.nodeSelector }}
           - --node-selector={{ .Values.sync.nodes.nodeSelector }}
+          {{- end }}
+          {{- if .Values.hostpathMapper.enabled }}
+          - --rewrite-host-paths=true
+          {{- end }}
+          {{- if .Values.multiNamespaceMode.enabled }}
+          - --multi-namespace-mode=true
           {{- end }}
           {{- range $f := .Values.syncer.extraArgs }}
           - {{ $f | quote }}
@@ -221,7 +295,7 @@ spec:
         {{- end }}
         securityContext:
 {{ toYaml .Values.securityContext | indent 10 }}
-        env:          
+        env:
           {{- if .Values.syncer.env }}
 {{ toYaml .Values.syncer.env | indent 10 }}
           {{- end }}

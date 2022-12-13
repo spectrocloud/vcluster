@@ -32,9 +32,16 @@ spec:
       release: {{ .Release.Name }}
   template:
     metadata:
+  {{- if .Values.syncer.podAnnotations }}
+      annotations:
+{{ toYaml .Values.syncer.podAnnotations | indent 8 }}
+  {{- end }}
       labels:
         app: vcluster
         release: {{ .Release.Name }}
+      {{- range $k, $v := .Values.syncer.podLabels }}
+        {{ $k }}: {{ $v | quote }}
+      {{- end }}
     spec:
       terminationGracePeriodSeconds: 10
       {{- if .Values.syncer.affinity }}
@@ -79,8 +86,6 @@ spec:
       {{- end }}
       nodeSelector:
 {{ toYaml .Values.syncer.nodeSelector | indent 8 }}
-      affinity:
-{{ toYaml .Values.syncer.affinity | indent 8 }}
       tolerations:
 {{ toYaml .Values.syncer.tolerations | indent 8 }}
       {{- if .Values.serviceAccount.name }}
@@ -167,6 +172,12 @@ spec:
           {{- end }}
           {{- if .Values.sync.nodes.nodeSelector }}
           - --node-selector={{ .Values.sync.nodes.nodeSelector }}
+          {{- end }}
+          {{- if .Values.hostpathMapper.enabled }}
+          - --rewrite-host-paths=true
+          {{- end }}
+          {{- if .Values.multiNamespaceMode.enabled }}
+          - --multi-namespace-mode=true
           {{- end }}
           {{- range $f := .Values.syncer.extraArgs }}
           - {{ $f | quote }}

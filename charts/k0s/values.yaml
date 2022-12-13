@@ -36,7 +36,11 @@ sync:
   persistentvolumeclaims:
     enabled: true
   ingresses:
-    enabled: true
+    enabled: false
+  ingressclasses: {}
+    # By default IngressClasses sync is enabled when the Ingress sync is enabled
+    # but it can be explicitly disabled by setting:
+    # enabled: false
   fake-nodes:
     enabled: true # will be ignored if nodes.enabled = true
   fake-persistentvolumes:
@@ -62,7 +66,8 @@ sync:
     enabled: false
   storageclasses:
     enabled: false
-  legacy-storageclasses:
+  # formerly named - "legacy-storageclasses"
+  hoststorageclasses:
     enabled: false
   priorityclasses:
     enabled: false
@@ -93,6 +98,9 @@ mapServices:
   # also create the namespace for the service.
   fromHost: []
 
+hostpathMapper:
+  enabled: false
+
 # Syncer configuration
 syncer:
   # Image to use for the syncer
@@ -118,7 +126,7 @@ syncer:
 # Virtual Cluster (k0s) configuration
 vcluster:
   # Image to use for the virtual cluster
-  image: k0sproject/k0s:v1.24.3-k0s.0
+  image: k0sproject/k0s:v1.25.3-k0s.0
   command:
     - k0s
   baseArgs:
@@ -198,18 +206,32 @@ tolerations: []
 
 # Extra Labels for the stateful set
 labels: {}
+podLabels: {}
 
 # Extra Annotations for the stateful set
 annotations: {}
+podAnnotations: {}
 
 # Service configurations
 service:
   type: ClusterIP
-  # Configuration for LoadBalancer service type
+
+  # Optional configuration
+  # A list of IP addresses for which nodes in the cluster will also accept traffic for this service.
+  # These IPs are not managed by Kubernetes; e.g., an external load balancer.
   externalIPs: []
+
+  # Optional configuration for LoadBalancer & NodePort service types
+  # Route external traffic to node-local or cluster-wide endpoints [ Local | Cluster ]
   externalTrafficPolicy: ""
-  # CIDR block(s) for the service allowlist; only used when the Service type is LoadBalancer
+
+  # Optional configuration for LoadBalancer service type
+  # Specify IP of load balancer to be created
+  loadBalancerIP: ""
+  # CIDR block(s) for the service allowlist
   loadBalancerSourceRanges: []
+  # Set the loadBalancerClass if using an external load balancer controller
+  loadBalancerClass: ""
 
 # Configure the ingress resource that allows you to access the vcluster
 ingress:
@@ -268,7 +290,21 @@ coredns:
     externalTrafficPolicy: ""
     # Extra Annotations
     annotations: {}
-  resources: ""
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+    requests:
+      # ensure that cpu/memory requests are high enough.
+      # for example gke wants minimum 10m/32Mi here!
+      cpu: 20m
+      memory: 64Mi
+# if below option is configured, it will override the coredns manifests with the following string
+#  manifests: |-
+#    apiVersion: ...
+#    ...
+  podAnnotations: {}
+  podLabels: {}
 
 # If enabled will deploy vcluster in an isolated mode with pod security
 # standards, limit ranges and resource quotas
@@ -331,3 +367,6 @@ init:
   # this allows you to use helm values inside, e.g.: {{ .Release.Name }}
   manifestsTemplate: ''
   helm: []
+
+multiNamespaceMode:
+  enabled: false

@@ -55,7 +55,7 @@ module.exports = {
         'operator/external-datastore',
         'operator/accessing-vcluster',
         'operator/init-manifests',
-        'operator/monitoring',
+        'operator/monitoring-logging',
         'operator/high-availability',
         'operator/other-distributions',
         'operator/restricted-hosts',
@@ -72,6 +72,7 @@ module.exports = {
       items: [
           'plugins/overview',
           'plugins/tutorial',
+          'plugins/generic-crd-sync',
       ]
     },
     {

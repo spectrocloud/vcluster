@@ -2,14 +2,18 @@ package cmd
 
 import (
 	"fmt"
-
-	"github.com/spf13/cobra"
-	"k8s.io/client-go/kubernetes"
+	"strconv"
 
 	"github.com/loft-sh/vcluster/cmd/vclusterctl/cmd/find"
 	"github.com/loft-sh/vcluster/cmd/vclusterctl/flags"
 	"github.com/loft-sh/vcluster/cmd/vclusterctl/log"
+	"github.com/loft-sh/vcluster/pkg/constants"
 	"github.com/loft-sh/vcluster/pkg/lifecycle"
+	"github.com/pkg/errors"
+	"github.com/spf13/cobra"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // ResumeCmd holds the cmd flags
@@ -28,7 +32,7 @@ func NewResumeCmd(globalFlags *flags.GlobalFlags) *cobra.Command {
 	}
 
 	cobraCmd := &cobra.Command{
-		Use:   "resume",
+		Use:   "resume [flags] vcluster_name",
 		Short: "Resumes a virtual cluster",
 		Long: `
 #######################################################
@@ -42,7 +46,8 @@ Example:
 vcluster resume test --namespace test
 #######################################################
 	`,
-		Args: cobra.ExactArgs(1),
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: newValidVClusterNameFunc(globalFlags),
 		RunE: func(cobraCmd *cobra.Command, args []string) error {
 			return cmd.Run(args)
 		},
