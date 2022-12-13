@@ -13,14 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/cmd/app/localkubernetes"
-	"github.com/loft-sh/vcluster/cmd/vclusterctl/cmd/find"
-	"github.com/loft-sh/vcluster/pkg/util/translate"
 	authenticationv1 "k8s.io/api/authentication/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-
-	"github.com/loft-sh/vcluster/pkg/upgrade"
-	"github.com/loft-sh/vcluster/pkg/util/portforward"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
@@ -40,6 +33,8 @@ import (
 	"github.com/loft-sh/vcluster/pkg/upgrade"
 	"github.com/loft-sh/vcluster/pkg/util/portforward"
 	"github.com/loft-sh/vcluster/pkg/util/translate"
+	"github.com/pkg/errors"
+	"github.com/spf13/cobra"
 )
 
 // ConnectCmd holds the cmd flags

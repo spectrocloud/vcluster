@@ -38,8 +38,4 @@ type Logger interface {
 
 	Write(message []byte) (int, error)
 	WriteString(message string)
-
-	// Fulfill pkg/util/loghelper interface... :/
-	Base() logr.Logger
-	WithName(name string) loghelper.Logger
 }
