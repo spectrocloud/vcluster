@@ -22,4 +22,4 @@ sources:
   - https://github.com/spectrocloud/vcluster
 type: application
 
-version: 0.0.1
+version: 0.13.0-alpha.0-spectro-20230103
