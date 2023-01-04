@@ -30,6 +30,34 @@ entries:
     - https://github.com/spectrocloud/vcluster/releases/download/vcluster-0.13.0-alpha.0-spectro-20230103/vcluster-0.13.0-alpha.0-spectro-20230103.tgz
     version: 0.13.0-alpha.0-spectro-20230103
   - apiVersion: v2
+    created: "2023-01-04T15:04:43.255376471Z"
+    description: vcluster - Virtual Kubernetes Clusters
+    digest: 05f4b6e5a9c529dfabbf1ec3c494e1c6c1212d1b545d48402b0dbda47ca611a9
+    home: https://vcluster.com
+    icon: https://static.loft.sh/branding/logos/vcluster/vertical/vcluster_vertical.svg
+    keywords:
+    - developer
+    - development
+    - sharing
+    - share
+    - multi-tenancy
+    - tenancy
+    - cluster
+    - space
+    - namespace
+    - vcluster
+    - vclusters
+    maintainers:
+    - email: support@spectrocloud.com
+      name: Spectro Cloud
+    name: vcluster
+    sources:
+    - https://github.com/spectrocloud/vcluster
+    type: application
+    urls:
+    - https://github.com/spectrocloud/vcluster/releases/download/vcluster-0.13.0-alpha.0-spectro-20230103/vcluster-0.13.0-alpha.0-spectro-20230103.tgz
+    version: 0.13.0-alpha.0-spectro-20230103
+  - apiVersion: v2
     created: "2023-01-03T22:56:53.51491043Z"
     description: vcluster - Virtual Kubernetes Clusters
     digest: 842ad84445700f53181b00f69311d7dd0f2d489decc0cb9c07217e76dd34efb8
@@ -62,6 +90,34 @@ entries:
     created: "2023-01-03T23:07:20.276987658Z"
     description: vcluster - Virtual Kubernetes Clusters (eks)
     digest: 8c654e88cb1bdb534a5d4204f950f16b394c5757aa98ec280fdd07b51d3a1321
+    home: https://vcluster.com
+    icon: https://static.loft.sh/branding/logos/vcluster/vertical/vcluster_vertical.svg
+    keywords:
+    - developer
+    - development
+    - sharing
+    - share
+    - multi-tenancy
+    - tenancy
+    - cluster
+    - space
+    - namespace
+    - vcluster
+    - vclusters
+    maintainers:
+    - email: support@spectrocloud.com
+      name: Spectro Cloud
+    name: vcluster-eks
+    sources:
+    - https://github.com/spectrocloud/vcluster
+    type: application
+    urls:
+    - https://github.com/spectrocloud/vcluster/releases/download/vcluster-eks-0.13.0-alpha.0-spectro-20230103/vcluster-eks-0.13.0-alpha.0-spectro-20230103.tgz
+    version: 0.13.0-alpha.0-spectro-20230103
+  - apiVersion: v2
+    created: "2023-01-04T15:04:43.436979868Z"
+    description: vcluster - Virtual Kubernetes Clusters (eks)
+    digest: 2d6e3562d10ab310fb5febb188b1beb6a19c9187b5ac241b4687fe0eab139063
     home: https://vcluster.com
     icon: https://static.loft.sh/branding/logos/vcluster/vertical/vcluster_vertical.svg
     keywords:
@@ -144,6 +200,34 @@ entries:
     - https://github.com/spectrocloud/vcluster/releases/download/vcluster-k0s-0.13.0-alpha.0-spectro-20230103/vcluster-k0s-0.13.0-alpha.0-spectro-20230103.tgz
     version: 0.13.0-alpha.0-spectro-20230103
   - apiVersion: v2
+    created: "2023-01-04T15:04:43.586420051Z"
+    description: vcluster - Virtual Kubernetes Clusters (k0s)
+    digest: 9c68c9eafdd59712aaf56952dfc90d329effd78ef0d51bea866744c303c09280
+    home: https://vcluster.com
+    icon: https://static.loft.sh/branding/logos/vcluster/vertical/vcluster_vertical.svg
+    keywords:
+    - developer
+    - development
+    - sharing
+    - share
+    - multi-tenancy
+    - tenancy
+    - cluster
+    - space
+    - namespace
+    - vcluster
+    - vclusters
+    maintainers:
+    - email: support@spectrocloud.com
+      name: Spectro Cloud
+    name: vcluster-k0s
+    sources:
+    - https://github.com/spectrocloud/vcluster
+    type: application
+    urls:
+    - https://github.com/spectrocloud/vcluster/releases/download/vcluster-k0s-0.13.0-alpha.0-spectro-20230103/vcluster-k0s-0.13.0-alpha.0-spectro-20230103.tgz
+    version: 0.13.0-alpha.0-spectro-20230103
+  - apiVersion: v2
     created: "2023-01-03T22:56:53.929311248Z"
     description: vcluster - Virtual Kubernetes Clusters (k0s)
     digest: d0e27221df6cfcb73c54570d0f2f2e489e7a53fe41184a1cb7c81ccdb60c476c
@@ -201,6 +285,34 @@ entries:
     - https://github.com/spectrocloud/vcluster/releases/download/vcluster-k8s-0.13.0-alpha.0-spectro-20230103/vcluster-k8s-0.13.0-alpha.0-spectro-20230103.tgz
     version: 0.13.0-alpha.0-spectro-20230103
   - apiVersion: v2
+    created: "2023-01-04T15:04:43.736668161Z"
+    description: vcluster - Virtual Kubernetes Clusters (k8s)
+    digest: 32200ad3c1abbf492e7f71029026190782460f36ce534b206e733c066a376fe9
+    home: https://vcluster.com
+    icon: https://static.loft.sh/branding/logos/vcluster/vertical/vcluster_vertical.svg
+    keywords:
+    - developer
+    - development
+    - sharing
+    - share
+    - multi-tenancy
+    - tenancy
+    - cluster
+    - space
+    - namespace
+    - vcluster
+    - vclusters
+    maintainers:
+    - email: support@spectrocloud.com
+      name: Spectro Cloud
+    name: vcluster-k8s
+    sources:
+    - https://github.com/spectrocloud/vcluster
+    type: application
+    urls:
+    - https://github.com/spectrocloud/vcluster/releases/download/vcluster-k8s-0.13.0-alpha.0-spectro-20230103/vcluster-k8s-0.13.0-alpha.0-spectro-20230103.tgz
+    version: 0.13.0-alpha.0-spectro-20230103
+  - apiVersion: v2
     created: "2023-01-03T22:56:54.159035512Z"
     description: vcluster - Virtual Kubernetes Clusters (k8s)
     digest: 9d570fb0c0760af71bf3fb04650221002711ac453822f07d596727aac6b33d11
@@ -228,4 +340,4 @@ entries:
     urls:
     - https://github.com/spectrocloud/vcluster/releases/download/vcluster-k8s-0.0.1/vcluster-k8s-0.0.1.tgz
     version: 0.0.1
-generated: "2023-01-03T23:07:20.586820764Z"
+generated: "2023-01-04T15:04:43.736725063Z"
