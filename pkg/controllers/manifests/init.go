@@ -2,7 +2,7 @@ package manifests
 
 import (
 	"context"
-	"crypto/md5"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -446,7 +446,7 @@ func (r *InitManifestsConfigMapReconciler) getHashedConfig(chart Chart) (string,
 		return "", err
 	}
 
-	return fmt.Sprintf("%x", md5.Sum(rawData)), nil
+	return fmt.Sprintf("%x", sha256.Sum256(rawData)), nil
 }
 
 func (r *InitManifestsConfigMapReconciler) releaseExists(chart Chart) (bool, error) {
