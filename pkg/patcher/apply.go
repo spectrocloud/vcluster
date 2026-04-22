@@ -8,6 +8,7 @@ import (
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
 	"github.com/loft-sh/vcluster/pkg/util/clienthelper"
 	"github.com/loft-sh/vcluster/pkg/util/patch"
+	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -18,6 +19,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 )
+
+// maxResourceVersionConflictAttempts is how many times we try Update / Status().Update before
+// giving up on 409 Conflict after re-fetching and re-applying the merge patch.
+const maxResourceVersionConflictAttempts = 5
 
 func CreateVirtualObject(ctx *synccontext.SyncContext, pObj, vObj client.Object, eventRecorder record.EventRecorder, hasStatus bool) (ctrl.Result, error) {
 	gvk, err := apiutil.GVKForObject(vObj, scheme.Scheme)
@@ -247,19 +252,53 @@ func applyObjectWithPatch(ctx *synccontext.SyncContext, objPatch patch.Patch, ob
 
 	// create / update
 	afterObj := obj.DeepCopyObject().(client.Object)
+	key := client.ObjectKeyFromObject(obj)
 	if isStatus {
-		err = kubeClient.Status().Update(ctx, obj)
-		if err != nil {
-			return fmt.Errorf("update object status: %w", err)
+		var statusErr error
+		for i := 0; i < maxResourceVersionConflictAttempts; i++ {
+			if isUpdate {
+				mergeLiveHostPodStatusBeforeHostStatusWrite(ctx, kubeClient, obj, direction)
+			}
+			statusErr = kubeClient.Status().Update(ctx, obj)
+			if statusErr == nil {
+				break
+			}
+			if !kerrors.IsConflict(statusErr) {
+				return fmt.Errorf("update object status: %w", statusErr)
+			}
+			if i == maxResourceVersionConflictAttempts-1 {
+				return fmt.Errorf("update object status: %w", statusErr)
+			}
+			if err := kubeClient.Get(ctx, key, obj); err != nil {
+				return fmt.Errorf("get object after status conflict: %w", err)
+			}
+			if err := objPatch.Apply(obj); err != nil {
+				return fmt.Errorf("apply patch after status conflict: %w", err)
+			}
 		}
 	} else {
 		if isUpdate {
-			err = kubeClient.Update(ctx, obj)
-			if err != nil {
-				return fmt.Errorf("update object: %w", err)
+			var updateErr error
+			for i := 0; i < maxResourceVersionConflictAttempts; i++ {
+				updateErr = kubeClient.Update(ctx, obj)
+				if updateErr == nil {
+					break
+				}
+				if !kerrors.IsConflict(updateErr) {
+					return fmt.Errorf("update object: %w", updateErr)
+				}
+				if i == maxResourceVersionConflictAttempts-1 {
+					return fmt.Errorf("update object: %w", updateErr)
+				}
+				if err := kubeClient.Get(ctx, key, obj); err != nil {
+					return fmt.Errorf("get object after conflict: %w", err)
+				}
+				if err := objPatch.Apply(obj); err != nil {
+					return fmt.Errorf("apply patch after conflict: %w", err)
+				}
 			}
 		} else {
-			err = kubeClient.Create(ctx, obj)
+			err := kubeClient.Create(ctx, obj)
 			if err != nil {
 				return fmt.Errorf("create object: %w", err)
 			}
@@ -284,6 +323,74 @@ func applyObjectWithPatch(ctx *synccontext.SyncContext, objPatch patch.Patch, ob
 		}
 	}
 	return nil
+}
+
+// mergeLiveHostPodStatusBeforeHostStatusWrite overlays kubelet- and API-owned Pod status from the
+// live host object before we write the status subresource. The syncer can otherwise apply a patch
+// built from a stale virtual view, producing impossible combinations (for example Ready=False
+// while containerStatuses report ready) or touching immutable qosClass. Custom readiness-gate
+// conditions from the desired object are preserved.
+func mergeLiveHostPodStatusBeforeHostStatusWrite(ctx *synccontext.SyncContext, kubeClient client.Client, obj client.Object, direction synccontext.SyncDirection) {
+	if direction != synccontext.SyncVirtualToHost {
+		return
+	}
+	pod, ok := obj.(*corev1.Pod)
+	if !ok || pod.GetNamespace() == "" {
+		return
+	}
+	live := &corev1.Pod{}
+	if err := kubeClient.Get(ctx, client.ObjectKeyFromObject(pod), live); err != nil {
+		return
+	}
+	desired := pod
+	desired.Status.ContainerStatuses = live.Status.ContainerStatuses
+	desired.Status.InitContainerStatuses = live.Status.InitContainerStatuses
+	desired.Status.EphemeralContainerStatuses = live.Status.EphemeralContainerStatuses
+	desired.Status.QOSClass = live.Status.QOSClass
+	if live.Status.StartTime != nil {
+		desired.Status.StartTime = live.Status.StartTime
+	}
+	desired.Status.NominatedNodeName = live.Status.NominatedNodeName
+
+	var kubeletConds []corev1.PodCondition
+	seenKubelet := make(map[corev1.PodConditionType]struct{})
+	for _, c := range live.Status.Conditions {
+		if !isKubeletManagedPodConditionType(c.Type) {
+			continue
+		}
+		kubeletConds = append(kubeletConds, c)
+		seenKubelet[c.Type] = struct{}{}
+	}
+	for _, c := range desired.Status.Conditions {
+		if !isKubeletManagedPodConditionType(c.Type) {
+			continue
+		}
+		if _, ok := seenKubelet[c.Type]; ok {
+			continue
+		}
+		kubeletConds = append(kubeletConds, c)
+		seenKubelet[c.Type] = struct{}{}
+	}
+	var customConds []corev1.PodCondition
+	for _, c := range desired.Status.Conditions {
+		if isKubeletManagedPodConditionType(c.Type) {
+			continue
+		}
+		customConds = append(customConds, c)
+	}
+	desired.Status.Conditions = append(kubeletConds, customConds...)
+}
+
+func isKubeletManagedPodConditionType(t corev1.PodConditionType) bool {
+	switch t {
+	case corev1.PodScheduled, corev1.PodInitialized, corev1.PodReady, corev1.ContainersReady,
+		corev1.PodReadyToStartContainers, corev1.DisruptionTarget,
+		corev1.PodResizePending, corev1.PodResizeInProgress,
+		corev1.PodConditionType("AllContainersRestarting"):
+		return true
+	default:
+		return false
+	}
 }
 
 func logCreate(ctx context.Context, direction synccontext.SyncDirection, obj client.Object) {
