@@ -1,7 +1,6 @@
 package config
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +19,7 @@ const (
 
 	HelmDriver     DriverType = "helm"
 	PlatformDriver DriverType = "platform"
+	DockerDriver   DriverType = "docker"
 )
 
 var singleConfig *CLI
@@ -55,43 +55,18 @@ func (c *CLI) Save() error {
 	return Write(path, c)
 }
 
-func (c *CLI) Delete() error {
+// ClearPlatform resets the platform section of the config to its default.
+// If the driver was set to platform, it is reset to helm since the platform
+// is no longer available. Other driver settings (e.g. docker) are preserved.
+func (c *CLI) ClearPlatform() error {
 	if c == nil || c.path == "" {
 		return errors.New("nil config path")
 	}
-
-	file, err := os.Open(c.path)
-	if err != nil {
-		return fmt.Errorf("failed to load vcluster configuration file from %q : %w", c.path, err)
+	c.Platform = New().Platform
+	if c.Driver.Type == PlatformDriver {
+		c.Driver.Type = HelmDriver
 	}
-	stat, err := file.Stat()
-	if err != nil {
-		return fmt.Errorf("failed to load vcluster configuration file from %q: %w", c.path, err)
-	}
-	if stat.IsDir() {
-		return fmt.Errorf("failed to load vcluster configuration file %q", c.path)
-	}
-	defer file.Close()
-
-	fileBytes, err := io.ReadAll(file)
-	if err != nil {
-		return fmt.Errorf("read all: %w", err)
-	}
-
-	decoder := json.NewDecoder(bytes.NewReader(fileBytes))
-	decoder.DisallowUnknownFields()
-	tryRead := &CLI{}
-	err = decoder.Decode(tryRead)
-	if err != nil {
-		return fmt.Errorf("failed to unmarshall vcluster configuration from %q: %w", c.path, err)
-	}
-
-	// delete file at path
-	err = os.Remove(c.path)
-	if err != nil {
-		return fmt.Errorf("failed to delete configuration file at %q: %w", c.path, err)
-	}
-	return nil
+	return c.Save()
 }
 
 // Read returns the current config by trying to read it from the given config path.
@@ -137,12 +112,16 @@ func PrintDriverInfo(verb string, driver DriverType, log log.Logger) {
 	// only print this to stderr
 	log = log.ErrorStreamOnly()
 
-	if driver == HelmDriver {
+	switch driver {
+	case HelmDriver:
 		log.Infof("Using vCluster driver 'helm' to %s your virtual clusters, which means the vCluster CLI is running helm commands directly", verb)
-		log.Info("If you prefer to use the vCluster platform API instead, use the flag '--driver platform' or run 'vcluster use driver platform' to change the default")
-	} else {
+		log.Info("If you prefer to use the vCluster platform API or Docker instead, use '--driver platform' or '--driver docker', or run 'vcluster use driver platform' or 'vcluster use driver docker' to change the default")
+	case PlatformDriver:
 		log.Infof("Using vCluster driver 'platform' to %s your virtual clusters, which means the CLI is using the vCluster platform API instead of helm", verb)
-		log.Info("If you prefer to use helm instead, use the flag '--driver helm' or run 'vcluster use driver helm' to change the default")
+		log.Info("If you prefer to use helm or Docker instead, use '--driver helm' or '--driver docker', or run 'vcluster use driver helm' or 'vcluster use driver docker' to change the default")
+	case DockerDriver:
+		log.Infof("Using vCluster driver 'docker' to %s your virtual clusters, which means the CLI is managing Docker-based virtual clusters locally", verb)
+		log.Info("If you prefer to use helm or the vCluster platform API instead, use '--driver helm' or '--driver platform', or run 'vcluster use driver helm' or 'vcluster use driver platform' to change the default")
 	}
 }
 
@@ -152,8 +131,10 @@ func ParseDriverType(driver string) (DriverType, error) {
 		return HelmDriver, nil
 	case "platform":
 		return PlatformDriver, nil
+	case "docker":
+		return DockerDriver, nil
 	default:
-		return "", fmt.Errorf("invalid driver type: %q, only \"helm\" or \"platform\" are valid", driver)
+		return "", fmt.Errorf("invalid driver type: %q, only \"helm\", \"platform\" or \"docker\" are valid", driver)
 	}
 }
 

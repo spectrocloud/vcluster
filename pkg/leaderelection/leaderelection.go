@@ -8,6 +8,7 @@ import (
 
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
 	"github.com/loft-sh/vcluster/pkg/telemetry"
+	"github.com/loft-sh/vcluster/pkg/util/osutil"
 	"github.com/loft-sh/vcluster/pkg/util/translate"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -22,7 +23,7 @@ import (
 )
 
 func StartLeaderElection(ctx *synccontext.ControllerContext, scheme *runtime.Scheme, run func() error) error {
-	localConfig := ctx.LocalManager.GetConfig()
+	localConfig := ctx.HostManager.GetConfig()
 
 	// create the event recorder
 	recorderClient, err := kubernetes.NewForConfig(localConfig)
@@ -31,7 +32,7 @@ func StartLeaderElection(ctx *synccontext.ControllerContext, scheme *runtime.Sch
 	}
 	eventBroadcaster := record.NewBroadcaster()
 	eventBroadcaster.StartLogging(func(format string, args ...interface{}) { klog.Infof(format, args...) })
-	eventBroadcaster.StartRecordingToSink(&clientv1.EventSinkImpl{Interface: recorderClient.CoreV1().Events(ctx.Config.WorkloadNamespace)})
+	eventBroadcaster.StartRecordingToSink(&clientv1.EventSinkImpl{Interface: recorderClient.CoreV1().Events(ctx.Config.HostNamespace)})
 	recorder := eventBroadcaster.NewRecorder(scheme, corev1.EventSource{Component: "vcluster"})
 
 	// create the leader election client
@@ -49,7 +50,7 @@ func StartLeaderElection(ctx *synccontext.ControllerContext, scheme *runtime.Sch
 	// Lock required for leader election
 	rl, err := resourcelock.New(
 		resourcelock.LeasesResourceLock,
-		ctx.Config.WorkloadNamespace,
+		ctx.Config.HostNamespace,
 		translate.SafeConcatName("vcluster", translate.VClusterName, "controller"),
 		leaderElectionClient.CoreV1(),
 		leaderElectionClient.CoordinationV1(),
@@ -75,7 +76,8 @@ func StartLeaderElection(ctx *synccontext.ControllerContext, scheme *runtime.Sch
 				// start vcluster in leader mode
 				err = run()
 				if err != nil {
-					klog.Fatal(err)
+					klog.Error(err)
+					osutil.Exit(1)
 				}
 			},
 			OnStoppedLeading: func() {
@@ -85,7 +87,7 @@ func StartLeaderElection(ctx *synccontext.ControllerContext, scheme *runtime.Sch
 				telemetry.CollectorControlPlane.RecordError(ctx, ctx.Config, telemetry.WarningSeverity, fmt.Errorf("leader election lost"))
 				telemetry.CollectorControlPlane.Flush()
 
-				os.Exit(1)
+				osutil.Exit(1)
 			},
 		},
 	})

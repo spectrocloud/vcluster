@@ -3,15 +3,6 @@ templates:
   - statefulset.yaml
 
 tests:
-  - it: should not create control-plane
-    set:
-      experimental:
-        isolatedControlPlane:
-          headless: true
-    asserts:
-      - hasDocuments:
-          count: 0
-
   - it: image name
     set:
       controlPlane:
@@ -44,21 +35,6 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].image
           value: ghcr.io/my-repo:custom-tag
-
-  - it: custom init container
-    set:
-      controlPlane:
-        distro:
-          k3s:
-            enabled: true
-            image:
-              registry: "ghcr.io"
-              repository: "test"
-              tag: "123"
-    asserts:
-      - equal:
-          path: spec.template.spec.initContainers[0].image
-          value: ghcr.io/test:123
 
   - it: disables serviceLinks for sts etcd pod
     set:
@@ -165,7 +141,7 @@ tests:
           value: vcluster
       - equal:
           path: spec.template.spec.terminationGracePeriodSeconds
-          value: 10
+          value: 15
       - equal:
           path: spec.volumeClaimTemplates[0].spec.accessModes[0]
           value: ReadWriteOnce
@@ -316,9 +292,6 @@ tests:
   - it: add volumes
     set:
       controlPlane:
-        distro:
-          k3s:
-            enabled: true
         statefulSet:
           persistence:
             addVolumes:
@@ -330,14 +303,11 @@ tests:
             name: myVolume
       - lengthEqual:
           path: spec.template.spec.volumes
-          count: 7
+          count: 6
 
   - it: add templated volumes
     set:
       controlPlane:
-        distro:
-          k3s:
-            enabled: true
         statefulSet:
           persistence:
             addVolumes:
@@ -349,7 +319,7 @@ tests:
             name: RELEASE-NAME-myVolume
       - lengthEqual:
           path: spec.template.spec.volumes
-          count: 7
+          count: 6
 
   - it: enable k8s
     set:
@@ -470,8 +440,7 @@ tests:
     set:
       controlPlane:
         distro:
-          k3s:
-            enabled: true
+          k8s:
             env:
               - name: KEY
                 value: VALUE
@@ -551,7 +520,7 @@ tests:
     asserts:
       - equal:
           path: spec.template.spec.initContainers[0].image
-          value: ghcr.io/loft-sh/kubernetes:v1.32.1
+          value: ghcr.io/loft-sh/kubernetes:v1.35.0
 
   - it: k8s override image tag
     set:
@@ -620,7 +589,7 @@ tests:
     asserts:
     - equal:
         path: spec.template.spec.initContainers[0].image
-        value: ghcr.io/loft-sh/kubernetes:v1.32.1
+        value: ghcr.io/loft-sh/kubernetes:v1.35.0
 
   - it: k8s version not set, default tag images used for apiServer and controllerManager (virtual scheduler enabled, deprecated)
     chart:
@@ -636,7 +605,7 @@ tests:
     asserts:
       - equal:
           path: spec.template.spec.initContainers[0].image
-          value: ghcr.io/loft-sh/kubernetes:v1.32.1
+          value: ghcr.io/loft-sh/kubernetes:v1.35.0
 
   - it: k8s version sets image tag for apiServer and controllerManager (virtual scheduler enabled)
     set:
@@ -737,6 +706,53 @@ tests:
           path: spec.template.spec.dnsConfig.options[0].value
           value: "2"
 
+  - it: sets host aliases
+    set:
+      controlPlane:
+        statefulSet:
+          hostAliases:
+            - ip: "127.0.0.1"
+              hostnames:
+                - "myadded.examplehostname.com"
+            - ip: "10.0.1.5"
+              hostnames:
+                - "custom-db.internal"
+                - "db-alias"
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.hostAliases
+          count: 2
+      - equal:
+          path: spec.template.spec.hostAliases[0].ip
+          value: "127.0.0.1"
+      - equal:
+          path: spec.template.spec.hostAliases[0].hostnames[0]
+          value: "myadded.examplehostname.com"
+      - equal:
+          path: spec.template.spec.hostAliases[1].ip
+          value: "10.0.1.5"
+      - equal:
+          path: spec.template.spec.hostAliases[1].hostnames[0]
+          value: "custom-db.internal"
+      - equal:
+          path: spec.template.spec.hostAliases[1].hostnames[1]
+          value: "db-alias"
+
+  - it: sets runtimeClassName
+    set:
+      controlPlane:
+        statefulSet:
+          runtimeClassName: "gvisor"
+    asserts:
+      - equal:
+          path: spec.template.spec.runtimeClassName
+          value: "gvisor"
+
+  - it: does not set runtimeClassName by default
+    asserts:
+      - notExists:
+          path: spec.template.spec.runtimeClassName
+
   - it: must use StatefulSet for embedded etcd
     set:
       controlPlane:
@@ -835,21 +851,6 @@ tests:
           path: spec.template.spec.initContainers[0].image
           value: ghcr.io/loft-sh/kubernetes:v1.35.999-full
 
-  - it: private nodes k8s full image disabled
-    set:
-      controlPlane:
-        distro:
-          k8s:
-            image:
-              tag: v1.35.999
-      privateNodes:
-        enabled: true
-        importNodeBinaries: false
-    asserts:
-      - equal:
-          path: spec.template.spec.initContainers[0].image
-          value: ghcr.io/loft-sh/kubernetes:v1.35.999
-
   - it: private nodes k8s full image version
     set:
       controlPlane:
@@ -862,21 +863,6 @@ tests:
       - equal:
           path: spec.template.spec.initContainers[0].image
           value: ghcr.io/loft-sh/kubernetes:v1.35.999-full
-
-  - it: private nodes k8s full image disabled version
-    set:
-      controlPlane:
-        distro:
-          k8s:
-            image:
-              tag: v1.35.999
-      privateNodes:
-        enabled: true
-        importNodeBinaries: false
-    asserts:
-      - equal:
-          path: spec.template.spec.initContainers[0].image
-          value: ghcr.io/loft-sh/kubernetes:v1.35.999
 
   - it: sets custom probe configuration
     set:
@@ -990,3 +976,111 @@ tests:
           path: spec.template.spec.containers[0].env[?(@.name=="LOFT_LOG_ENCODING")].value
           value: console
 
+  - it: should add init containers
+    set:
+      controlPlane:
+        statefulSet:
+          initContainers:
+            - name: init-container
+              image: init-container
+              command: ["/bin/sh", "-c", "echo 'init-container'"]
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[1].name
+          value: init-container
+      - equal:
+          path: spec.template.spec.initContainers[1].image
+          value: init-container
+      - equal:
+          path: spec.template.spec.initContainers[1].command[0]
+          value: /bin/sh
+      - equal:
+          path: spec.template.spec.initContainers[1].command[1]
+          value: -c
+      - equal:
+          path: spec.template.spec.initContainers[1].command[2]
+          value: echo 'init-container'
+
+  - it: should add sidecar containers
+    set:
+      controlPlane:
+        statefulSet:
+          sidecarContainers:
+            - name: sidecar-container
+              image: sidecar-container
+              command: ["/bin/sh", "-c", "echo 'sidecar-container'"]
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[1].name
+          value: sidecar-container
+      - equal:
+          path: spec.template.spec.containers[1].image
+          value: sidecar-container
+      - equal:
+          path: spec.template.spec.containers[1].command[0]
+          value: /bin/sh
+      - equal:
+          path: spec.template.spec.containers[1].command[1]
+          value: -c
+      - equal:
+          path: spec.template.spec.containers[1].command[2]
+          value: echo 'sidecar-container'
+
+  - it: should add NET_ADMIN and NET_RAW capabilities when kube-vip is enabled
+    set:
+      controlPlane:
+        advanced:
+          kubeVip:
+            enabled: true
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add[0]
+          value: NET_ADMIN
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add[1]
+          value: NET_RAW
+
+  - it: should merge and deduplicate kube-vip capabilities with custom security context
+    set:
+      controlPlane:
+        advanced:
+          kubeVip:
+            enabled: true
+        statefulSet:
+          security:
+            containerSecurityContext:
+              runAsUser: 1000
+              capabilities:
+                add:
+                  - NET_ADMIN
+                  - SYS_TIME
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.runAsUser
+          value: 1000
+      - lengthEqual:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add
+          count: 3
+      - contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add
+          content: NET_ADMIN
+      - contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add
+          content: NET_RAW
+      - contains:
+          path: spec.template.spec.containers[0].securityContext.capabilities.add
+          content: SYS_TIME
+
+  - it: should apply default security context when kube-vip is disabled
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.runAsUser
+          value: 0
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.runAsGroup
+          value: 0
+      - notExists:
+          path: spec.template.spec.containers[0].securityContext.capabilities

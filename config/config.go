@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"os"
 	"reflect"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/invopop/jsonschema"
+	"github.com/loft-sh/api/v4/pkg/vclusterconfig"
+	yamlv3 "gopkg.in/yaml.v3"
+	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -26,10 +29,15 @@ var ErrInvalidConfig = errors.New("invalid config")
 // NewDefaultConfig creates a new config based on the values.yaml, including all default values.
 func NewDefaultConfig() (*Config, error) {
 	retConfig := &Config{}
-	err := yaml.Unmarshal([]byte(Values), retConfig)
-	if err != nil {
+	if err := yaml.Unmarshal([]byte(Values), retConfig); err != nil {
 		return nil, err
 	}
+
+	platformConfig := vclusterconfig.NewDefaultPlatformConfig()
+	retConfig.Sleep = platformConfig.Sleep
+	retConfig.Snapshots = platformConfig.Snapshots
+	retConfig.Deletion = platformConfig.Deletion
+	retConfig.Platform = platformConfig.Platform
 
 	return retConfig, nil
 }
@@ -47,6 +55,9 @@ type Config struct {
 
 	// Integrations holds config for vCluster integrations with other operators or tools running on the host cluster
 	Integrations Integrations `json:"integrations,omitempty"`
+
+	// Deploy holds configuration for the deployment of vCluster.
+	Deploy Deploy `json:"deploy,omitempty"`
 
 	// Networking options related to the virtual cluster.
 	Networking Networking `json:"networking,omitempty"`
@@ -69,9 +80,6 @@ type Config struct {
 	// Experimental features for vCluster. Configuration here might change, so be careful with this.
 	Experimental Experimental `json:"experimental,omitempty"`
 
-	// External holds configuration for tools that are external to the vCluster.
-	External map[string]ExternalConfig `json:"external,omitempty"`
-
 	// Configuration related to telemetry gathered about vCluster usage.
 	Telemetry Telemetry `json:"telemetry,omitempty"`
 
@@ -84,11 +92,20 @@ type Config struct {
 	// Plugin specifies which vCluster plugins to enable. Use "plugins" instead. Do not use this option anymore.
 	Plugin map[string]Plugin `json:"plugin,omitempty"`
 
-	// SleepMode holds the native sleep mode configuration for Pro clusters
-	SleepMode *SleepMode `json:"sleepMode,omitempty"`
-
 	// Logging provides structured logging options
 	Logging *Logging `json:"logging,omitempty"`
+
+	// Sleep holds configuration for automatically putting the virtual cluster to sleep.
+	Sleep *vclusterconfig.Sleep `json:"sleep,omitempty"`
+
+	// Snapshots holds configuration for automatic vCluster snapshots.
+	Snapshots *vclusterconfig.Snapshots `json:"snapshots,omitempty"`
+
+	// Deletion holds configuration for automatic vCluster deletion.
+	Deletion *vclusterconfig.Deletion `json:"deletion,omitempty"`
+
+	// Platform holds vCluster Platform specific configuration.
+	Platform *vclusterconfig.Platform `json:"platform,omitempty"`
 }
 
 // PrivateNodes enables private nodes for vCluster. When turned on, vCluster will not sync resources to the host cluster
@@ -97,15 +114,216 @@ type PrivateNodes struct {
 	// Enabled defines if dedicated nodes should be enabled.
 	Enabled bool `json:"enabled,omitempty"`
 
-	// ImportNodeBinaries defines to use the loft-sh/kubernetes:VERSION-full image to also copy the node binaries to the control plane. This allows upgrades and
-	// joining new nodes into the cluster without having to download the binaries from the internet.
-	ImportNodeBinaries bool `json:"importNodeBinaries,omitempty"`
+	// Kubelet holds kubelet configuration that is used for all nodes.
+	Kubelet Kubelet `json:"kubelet,omitempty"`
 
+	// AutoUpgrade holds configuration for auto upgrade.
+	AutoUpgrade AutoUpgrade `json:"autoUpgrade,omitempty"`
+
+	// JoinNode holds configuration specifically used during joining the node (see "kubeadm join").
+	JoinNode JoinConfiguration `json:"joinNode,omitempty"`
+
+	// AutoNodes stores auto nodes configuration.
+	AutoNodes []PrivateNodesAutoNodes `json:"autoNodes,omitempty"`
+
+	// VPN holds configuration for the private nodes vpn. This can be used to connect the private nodes to the control plane or
+	// connect the private nodes to each other if they are not running in the same network. Platform connection is required for the vpn to work.
+	VPN PrivateNodesVPN `json:"vpn,omitempty"`
+
+	// Daemon holds configuration for the private nodes daemon that is deployed on the nodes.
+	Daemon PrivateNodesDaemon `json:"daemon,omitempty"`
+}
+
+type PrivateNodesDaemon struct {
+	// Enabled defines if the private nodes daemon should be enabled.
+	Enabled bool `json:"enabled,omitempty"`
+
+	// ControlPlaneLoadBalancer holds configuration for the control plane load balancer. This is used to load balance the control plane traffic on the node to the control plane nodes.
+	// This is useful to achieve true high availability for the control plane without having to deploy a separate load balancer.
+	ControlPlaneLoadBalancer ControlPlaneLoadBalancer `json:"controlPlaneLoadBalancer,omitempty"`
+}
+
+type ControlPlaneLoadBalancer struct {
+	// Enabled defines if the control plane load balancer should be enabled. The control plane load balancer is used to load balance the control plane traffic on the node to the control plane nodes.
+	Enabled bool `json:"enabled,omitempty"`
+
+	// KubeProxy defines if the kube proxy should be proxied through the control plane load balancer as well.
+	KubeProxy bool `json:"kubeProxy,omitempty"`
+
+	// Port defines the port for the control plane load balancer.
+	Port int `json:"port,omitempty"`
+}
+
+type CloudControllerManager struct {
+	// Enabled defines if the embedded cloud controller manager should be enabled. This defaults to true, but can be disabled if you want to use
+	// an external cloud controller manager such as AWS or GCP. The cloud controller manager is responsible for setting the node's ip addresses as well
+	// as the provider id for the node and other node metadata.
+	Enabled bool `json:"enabled,omitempty"`
+}
+
+type PrivateNodesVPN struct {
+	// Enabled defines if the private nodes vpn should be enabled.
+	Enabled bool `json:"enabled,omitempty"`
+
+	// NodeToNode holds configuration for the node to node vpn. This can be used to connect the private nodes to each other if they are not running in the same network.
+	NodeToNode PrivateNodesVPNNodeToNode `json:"nodeToNode,omitempty"`
+}
+
+type PrivateNodesVPNNodeToNode struct {
+	// Enabled defines if the node to node vpn should be enabled.
+	Enabled bool `json:"enabled,omitempty"`
+}
+
+// PrivateNodesAutoNodes defines auto nodes
+type PrivateNodesAutoNodes struct {
+	// Provider is the node provider of the nodes in this pool.
+	Provider string `json:"provider,omitempty" jsonschema:"required"`
+
+	// Properties are the node provider properties. This is a simple key value map and can contain things
+	// like region, subscription, etc. that is then used by the node provider to create the nodes and node environment.
+	Properties map[string]string `json:"properties,omitempty"`
+
+	// Static defines static node pools. Static node pools have a fixed size and are not scaled automatically.
+	Static []StaticNodePool `json:"static,omitempty"`
+
+	// Dynamic defines dynamic node pools. Dynamic node pools are scaled automatically based on the requirements within the cluster.
+	// Karpenter is used under the hood to handle the scheduling of the nodes.
+	Dynamic []DynamicNodePool `json:"dynamic,omitempty"`
+}
+
+type DynamicNodePool struct {
+	// Name is the name of this NodePool
+	Name string `json:"name" jsonschema:"required"`
+
+	// NodeTypeSelector filters the types of nodes that can be provisioned by this pool.
+	// All requirements must be met for a node type to be eligible.
+	NodeTypeSelector []Requirement `json:"nodeTypeSelector,omitempty"`
+
+	// Taints are the taints to apply to the nodes in this pool.
+	Taints []KubeletJoinTaint `json:"taints,omitempty"`
+
+	// NodeLabels are the labels to apply to the nodes in this pool.
+	NodeLabels map[string]string `json:"nodeLabels,omitempty"`
+
+	// Limits specify the maximum resources that can be provisioned by this node pool,
+	// mapping to the 'limits' field in Karpenter's NodePool API.
+	Limits map[string]string `json:"limits,omitempty"`
+
+	// Disruption contains the parameters that relate to Karpenter's disruption logic
+	Disruption DynamicNodePoolDisruption `json:"disruption,omitempty"`
+
+	// TerminationGracePeriod is the maximum duration the controller will wait before forcefully deleting the pods on a node, measured from when deletion is first initiated.
+	//
+	// Warning: this feature takes precedence over a Pod's terminationGracePeriodSeconds value, and bypasses any blocked PDBs or the karpenter.sh/do-not-disrupt annotation.
+	//
+	// This field is intended to be used by cluster administrators to enforce that nodes can be cycled within a given time period.
+	// When set, drifted nodes will begin draining even if there are pods blocking eviction. Draining will respect PDBs and the do-not-disrupt annotation until the TGP is reached.
+	//
+	// Karpenter will preemptively delete pods so their terminationGracePeriodSeconds align with the node's terminationGracePeriod.
+	// If a pod would be terminated without being granted its full terminationGracePeriodSeconds prior to the node timeout,
+	// that pod will be deleted at T = node timeout - pod terminationGracePeriodSeconds.
+	//
+	// The feature can also be used to allow maximum time limits for long-running jobs which can delay node termination with preStop hooks.
+	// Defaults to 30s. Set to Never to wait indefinitely for pods to be drained.
+	TerminationGracePeriod string `json:"terminationGracePeriod,omitempty"`
+
+	// The amount of time a Node can live on the cluster before being removed
+	ExpireAfter string `json:"expireAfter,omitempty"`
+
+	// Weight is the weight of this node pool.
+	Weight int `json:"weight,omitempty"`
+}
+
+type DynamicNodePoolDisruption struct {
+	// ConsolidateAfter is the duration the controller will wait
+	// before attempting to terminate nodes that are underutilized.
+	// Refer to ConsolidationPolicy for how underutilization is considered.
+	ConsolidateAfter string `json:"consolidateAfter,omitempty"`
+
+	// ConsolidationPolicy describes which nodes Karpenter can disrupt through its consolidation
+	// algorithm. This policy defaults to "WhenEmptyOrUnderutilized" if not specified
+	ConsolidationPolicy string `json:"consolidationPolicy,omitempty"`
+
+	// Budgets is a list of Budgets.
+	// If there are multiple active budgets, Karpenter uses
+	// the most restrictive value. If left undefined,
+	// this will default to one budget with a value to 10%.
+	Budgets []DynamicNodePoolDisruptionBudget `json:"budgets,omitempty"`
+}
+type DynamicNodePoolDisruptionBudget struct {
+	// Nodes dictates the maximum number of NodeClaims owned by this NodePool
+	// that can be terminating at once. This is calculated by counting nodes that
+	// have a deletion timestamp set, or are actively being deleted by Karpenter.
+	// This field is required when specifying a budget.
+	Nodes string `json:"nodes,omitempty"`
+
+	// Schedule specifies when a budget begins being active, following
+	// the upstream cronjob syntax. If omitted, the budget is always active.
+	// Timezones are not supported.
+	Schedule string `json:"schedule,omitempty"`
+
+	// Duration determines how long a Budget is active since each Schedule hit.
+	// Only minutes and hours are accepted, as cron does not work in seconds.
+	// If omitted, the budget is always active.
+	// This is required if Schedule is set.
+	Duration string `json:"duration,omitempty"`
+}
+
+type StaticNodePool struct {
+	// Name is the name of this static nodePool
+	Name string `json:"name" jsonschema:"required"`
+
+	// NodeTypeSelector filters the types of nodes that can be provisioned by this pool.
+	// All requirements must be met for a node type to be eligible.
+	NodeTypeSelector []Requirement `json:"nodeTypeSelector,omitempty"`
+
+	// Taints are the taints to apply to the nodes in this pool.
+	Taints []KubeletJoinTaint `json:"taints,omitempty"`
+
+	// NodeLabels are the labels to apply to the nodes in this pool.
+	NodeLabels map[string]string `json:"nodeLabels,omitempty"`
+
+	// TerminationGracePeriod is the maximum duration the controller will wait before forcefully deleting the pods on a node, measured from when deletion is first initiated.
+	//
+	// Warning: this feature takes precedence over a Pod's terminationGracePeriodSeconds value, and bypasses any blocked PDBs or the karpenter.sh/do-not-disrupt annotation.
+	//
+	// This field is intended to be used by cluster administrators to enforce that nodes can be cycled within a given time period.
+	// When set, drifted nodes will begin draining even if there are pods blocking eviction. Draining will respect PDBs and the do-not-disrupt annotation until the TGP is reached.
+	//
+	// Karpenter will preemptively delete pods so their terminationGracePeriodSeconds align with the node's terminationGracePeriod.
+	// If a pod would be terminated without being granted its full terminationGracePeriodSeconds prior to the node timeout,
+	// that pod will be deleted at T = node timeout - pod terminationGracePeriodSeconds.
+	//
+	// The feature can also be used to allow maximum time limits for long-running jobs which can delay node termination with preStop hooks.
+	// Defaults to 30s. Set to Never to wait indefinitely for pods to be drained.
+	TerminationGracePeriod string `json:"terminationGracePeriod,omitempty"`
+
+	// Quantity is the number of desired nodes in this pool.
+	Quantity int `json:"quantity" jsonschema:"required"`
+}
+
+// KarpenterRequirement defines a scheduling requirement for a dynamic node pool.
+// It corresponds to an entry in the 'requirements' list of a Karpenter NodePool.
+type Requirement struct {
+	// Property is the property on the node type to select.
+	Property string `json:"property" jsonschema:"required"`
+
+	// Operator is the comparison operator, such as "In", "NotIn", "Exists". If empty, defaults to "In".
+	Operator string `json:"operator,omitempty"`
+
+	// Values is the list of values to use for comparison. This is mutually exclusive with value.
+	Values []string `json:"values,omitempty"`
+
+	// Value is the value to use for comparison. This is mutually exclusive with values.
+	Value string `json:"value,omitempty"`
+}
+
+type Deploy struct {
 	// KubeProxy holds dedicated kube proxy configuration.
 	KubeProxy KubeProxy `json:"kubeProxy,omitempty"`
 
-	// Kubelet holds kubelet configuration that is used for all nodes.
-	Kubelet Kubelet `json:"kubelet,omitempty"`
+	// Metallb holds dedicated metallb configuration.
+	Metallb Metallb `json:"metallb,omitempty"`
 
 	// CNI holds dedicated CNI configuration.
 	CNI CNI `json:"cni,omitempty"`
@@ -113,11 +331,56 @@ type PrivateNodes struct {
 	// LocalPathProvisioner holds dedicated local path provisioner configuration.
 	LocalPathProvisioner LocalPathProvisioner `json:"localPathProvisioner,omitempty"`
 
-	// AutoUpgrade holds configuration for auto upgrade.
-	AutoUpgrade AutoUpgrade `json:"autoUpgrade,omitempty"`
+	// IngressNginx holds dedicated ingress-nginx configuration.
+	// Deprecated: We do not deploy ingress nginx and the project is being deprecated.
+	IngressNginx IngressNginx `json:"ingressNginx,omitempty"`
 
-	// JoinNode holds configuration specifically used during joining the node (see "kubeadm join").
-	JoinNode JoinConfiguration `json:"joinNode,omitempty"`
+	// MetricsServer holds dedicated metrics server configuration.
+	MetricsServer DeployMetricsServer `json:"metricsServer,omitempty"`
+
+	// VolumeSnapshotController holds dedicated CSI snapshot-controller configuration.
+	VolumeSnapshotController VolumeSnapshotController `json:"volumeSnapshotController,omitempty"`
+}
+
+type DeployMetricsServer struct {
+	// Enabled defines if metrics server should be enabled.
+	Enabled bool `json:"enabled,omitempty"`
+}
+
+// VolumeSnapshotController defines CSI volumes snapshot-controller configuration.
+type VolumeSnapshotController struct {
+	// Enabled defines if the CSI volumes snapshot-controller should be enabled.
+	Enabled bool `json:"enabled,omitempty"`
+}
+
+type IngressNginx struct {
+	// Enabled defines if ingress-nginx should be enabled.
+	Enabled bool `json:"enabled,omitempty"`
+
+	// DefaultIngressClass defines if the deployed ingress class should be the default ingress class.
+	DefaultIngressClass bool `json:"defaultIngressClass,omitempty"`
+}
+
+type Metallb struct {
+	// Enabled defines if metallb should be enabled.
+	Enabled bool `json:"enabled,omitempty"`
+
+	// ControllerImage is the image for metallb controller.
+	ControllerImage string `json:"controllerImage,omitempty"`
+
+	// SpeakerImage is the image for metallb speaker.
+	SpeakerImage string `json:"speakerImage,omitempty"`
+
+	// IPAddressPool is the IP address pool to use for metallb.
+	IPAddressPool MetallbIPAddressPool `json:"ipAddressPool,omitempty"`
+}
+
+type MetallbIPAddressPool struct {
+	// Addresses is a list of IP addresses to use for the IP address pool.
+	Addresses []string `json:"addresses,omitempty"`
+
+	// L2Advertisement defines if L2 advertisement should be enabled for the IP address pool.
+	L2Advertisement bool `json:"l2Advertisement,omitempty"`
 }
 
 type Standalone struct {
@@ -127,28 +390,40 @@ type Standalone struct {
 	// DataDir defines the data directory for the standalone mode.
 	DataDir string `json:"dataDir,omitempty"`
 
-	// BundleRepository is the repository to use for downloading the Kubernetes bundle. Defaults to https://github.com/loft-sh/kubernetes/releases/download
-	BundleRepository string `json:"bundleRepository,omitempty"`
+	// AutoNodes automatically deploys nodes for standalone mode.
+	AutoNodes StandaloneAutoNodes `json:"autoNodes,omitempty"`
 
 	// JoinNode holds configuration for the standalone control plane node.
 	JoinNode StandaloneJoinNode `json:"joinNode,omitempty"`
+}
+
+type StandaloneAutoNodes struct {
+	// Provider is the node provider of the nodes in this pool.
+	Provider string `json:"provider,omitempty"`
+
+	// Quantity is the number of nodes to deploy for standalone mode.
+	Quantity int `json:"quantity,omitempty"`
+
+	// NodeTypeSelector filters the types of nodes that can be provisioned by this pool.
+	// All requirements must be met for a node type to be eligible.
+	NodeTypeSelector []Requirement `json:"nodeTypeSelector,omitempty"`
 }
 
 type StandaloneJoinNode struct {
 	// Enabled defines if the standalone node should be joined into the cluster. If false, only the control plane binaries will be executed and no node will show up in the actual cluster.
 	Enabled bool `json:"enabled,omitempty"`
 
-	// Name defines the name of the standalone node. If empty the node will get the hostname as name.
-	Name string `json:"name,omitempty"`
-
 	JoinConfiguration `json:",inline"`
 }
 
 type JoinConfiguration struct {
-	// PreJoinCommands are commands that will be executed before the join process starts.
+	// PreInstallCommands are commands that will be executed before containerd, kubelet etc. is installed.
+	PreInstallCommands []string `json:"preInstallCommands,omitempty"`
+
+	// PreJoinCommands are commands that will be executed before kubeadm join is executed.
 	PreJoinCommands []string `json:"preJoinCommands,omitempty"`
 
-	// PostJoinCommands are commands that will be executed after the join process starts.
+	// PostJoinCommands are commands that will be executed after kubeadm join is executed.
 	PostJoinCommands []string `json:"postJoinCommands,omitempty"`
 
 	// Containerd holds configuration for the containerd join process.
@@ -171,8 +446,73 @@ type ContainerdJoin struct {
 	// Enabled defines if containerd should be installed and configured by vCluster.
 	Enabled bool `json:"enabled,omitempty"`
 
+	// Registry holds configuration for how containerd should be configured to use a registries.
+	Registry ContainerdRegistry `json:"registry,omitempty"`
+
 	// PauseImage is the image for the pause container.
 	PauseImage string `json:"pauseImage,omitempty"`
+}
+
+type ContainerdRegistry struct {
+	// ConfigPath is the path to the containerd registry config.
+	ConfigPath string `json:"configPath,omitempty"`
+
+	// Mirrors holds configuration for the containerd registry mirrors. E.g. myregistry.io:5000 or docker.io. See https://github.com/containerd/containerd/blob/main/docs/hosts.md for more details.
+	Mirrors map[string]ContainerdMirror `json:"mirrors,omitempty"`
+
+	// Auth holds configuration for the containerd registry auth. See https://github.com/containerd/containerd/blob/main/docs/cri/registry.md#configure-registry-credentials for more details.
+	Auth map[string]ContainerdRegistryAuth `json:"auth,omitempty"`
+}
+
+type ContainerdRegistryAuth struct {
+	// Username is the username for the containerd registry.
+	Username string `json:"username,omitempty"`
+
+	// Password is the password for the containerd registry.
+	Password string `json:"password,omitempty"`
+
+	// IdentityToken is the token for the containerd registry.
+	IdentityToken string `json:"identityToken,omitempty"`
+
+	// Auth is the auth config for the containerd registry.
+	Auth string `json:"auth,omitempty"`
+}
+
+type ContainerdMirror struct {
+	// Server is the fallback server to use for the containerd registry mirror. E.g. https://registry-1.docker.io. See https://github.com/containerd/containerd/blob/main/docs/hosts.md for more details.
+	Server string `json:"server,omitempty"`
+
+	// CACert are paths to CA certificates to use for the containerd registry mirror.
+	CACert []string `json:"caCert,omitempty"`
+
+	// SkipVerify is a boolean to skip the certificate verification for the containerd registry mirror and allows http connections.
+	SkipVerify bool `json:"skipVerify,omitempty"`
+
+	// Capabilities is a list of capabilities to enable for the containerd registry mirror. If empty, will use pull and resolve capabilities.
+	Capabilities []string `json:"capabilities,omitempty"`
+
+	// OverridePath is a boolean to override the path for the containerd registry mirror.
+	OverridePath bool `json:"overridePath,omitempty"`
+
+	// Hosts holds configuration for the containerd registry mirror hosts. See https://github.com/containerd/containerd/blob/main/docs/hosts.md for more details.
+	Hosts []ContainerdMirrorHost `json:"hosts,omitempty"`
+}
+
+type ContainerdMirrorHost struct {
+	// Server is the server to use for the containerd registry mirror host. E.g. http://192.168.31.250:5000.
+	Server string `json:"server,omitempty"`
+
+	// CACert are paths to CA certificates to use for the containerd registry mirror host.
+	CACert []string `json:"caCert,omitempty"`
+
+	// SkipVerify is a boolean to skip the certificate verification for the containerd registry mirror and allows http connections.
+	SkipVerify bool `json:"skipVerify,omitempty"`
+
+	// Capabilities is a list of capabilities to enable for the containerd registry mirror. If empty, will use pull and resolve capabilities.
+	Capabilities []string `json:"capabilities,omitempty"`
+
+	// OverridePath is a boolean to override the path for the containerd registry mirror.
+	OverridePath bool `json:"overridePath,omitempty"`
 }
 
 type NodeRegistration struct {
@@ -228,6 +568,9 @@ type LocalPathProvisioner struct {
 
 	// ImagePullPolicy is the policy how to pull the image.
 	ImagePullPolicy string `json:"imagePullPolicy,omitempty"`
+
+	// NodePath is the path on the node where to create the persistent volume directories.
+	NodePath string `json:"nodePath,omitempty"`
 }
 
 type CNI struct {
@@ -262,9 +605,6 @@ type AutoUpgrade struct {
 	// NodeSelector is the node selector for the auto upgrade. If empty will select all worker nodes.
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
-	// BundleRepository is the repository to use for downloading the Kubernetes bundle. Defaults to https://github.com/loft-sh/kubernetes/releases/download
-	BundleRepository string `json:"bundleRepository,omitempty"`
-
 	// BinariesPath is the base path for the kubeadm binaries. Defaults to /usr/local/bin
 	BinariesPath string `json:"binariesPath,omitempty"`
 
@@ -273,11 +613,18 @@ type AutoUpgrade struct {
 
 	// Concurrency is the number of nodes that can be upgraded at the same time.
 	Concurrency int `json:"concurrency,omitempty"`
+
+	// PodSecurityContext specifies security context options on the pod level for the upgrade pod.
+	PodSecurityContext map[string]interface{} `json:"podSecurityContext,omitempty"`
+
+	// ContainerSecurityContext specifies security context options on the container level for the upgrade container.
+	ContainerSecurityContext map[string]interface{} `json:"containerSecurityContext,omitempty"`
 }
 
 type Kubelet struct {
-	// CgroupDriver defines the cgroup driver to use for the kubelet.
-	CgroupDriver string `json:"cgroupDriver,omitempty"`
+	// Config is the config for the kubelet that will be merged into the default kubelet config. More information can be found here:
+	// https://kubernetes.io/docs/reference/config-api/kubelet-config.v1beta1/#kubelet-config-k8s-io-v1beta1-KubeletConfiguration
+	Config map[string]interface{} `json:"config,omitempty"`
 }
 
 type KubeProxy struct {
@@ -304,6 +651,10 @@ type KubeProxy struct {
 
 	// ExtraArgs are additional arguments to pass to the kube-proxy.
 	ExtraArgs []string `json:"extraArgs,omitempty"`
+
+	// Config is the config for the kube-proxy that will be merged into the default kube-proxy config. More information can be found here:
+	// https://kubernetes.io/docs/reference/config-api/kube-proxy-config.v1alpha1/#kubeproxy-config-k8s-io-v1alpha1-KubeProxyConfiguration
+	Config map[string]interface{} `json:"config,omitempty"`
 }
 
 type Konnectivity struct {
@@ -372,6 +723,9 @@ type Integrations struct {
 
 	// Istio syncs DestinationRules, Gateways and VirtualServices from virtual cluster to the host.
 	Istio Istio `json:"istio,omitempty"`
+
+	// Netris integration helps configuring netris networking for vCluster.
+	Netris vclusterconfig.NetrisIntegration `json:"netris,omitempty"`
 }
 
 // CertManager reuses a host cert-manager and makes its CRDs from it available inside the vCluster
@@ -427,6 +781,8 @@ type IstioSyncToHost struct {
 type ExternalSecrets struct {
 	// Enabled defines whether the external secret integration is enabled or not
 	Enabled bool `json:"enabled,omitempty"`
+	// Version defines the version of the external secrets operator to use. If empty, the storage version will be used.
+	Version string `json:"version,omitempty"`
 	// Webhook defines whether the host webhooks are reused or not
 	Webhook EnableSwitch `json:"webhook,omitempty"`
 	// Sync defines the syncing behavior for the integration
@@ -434,18 +790,31 @@ type ExternalSecrets struct {
 }
 
 type ExternalSecretsSync struct {
-	// ExternalSecrets defines if external secrets should get synced from the virtual cluster to the host cluster.
-	ExternalSecrets EnableSwitch `json:"externalSecrets,omitempty"`
-	// Stores defines if secret stores should get synced from the virtual cluster to the host cluster and then bi-directionally.
-	Stores EnableSwitch `json:"stores,omitempty"`
-	// ClusterStores defines if cluster secrets stores should get synced from the host cluster to the virtual cluster.
-	ClusterStores ClusterStoresSyncConfig `json:"clusterStores,omitempty"`
+	// ToHost defines what resources are synced from the virtual cluster to the host
+	ToHost ExternalSecretsSyncToHostConfig `json:"toHost,omitempty"`
+	// FromHost defines what resources are synced from the host cluster to the virtual cluster
+	FromHost ExternalSecretsSyncFromHostConfig `json:"fromHost,omitempty"`
 }
 
-type ClusterStoresSyncConfig struct {
+type ExternalSecretsSyncToHostConfig struct {
+	// ExternalSecrets allows to configure if only a subset of ExternalSecrets matching a label selector should get synced from the virtual cluster to the host cluster.
+	ExternalSecrets SelectorConfig `json:"externalSecrets,omitempty"`
+	// Stores defines if secret stores should get synced from the virtual cluster to the host cluster and then bi-directionally.
+	Stores EnableSwitchSelector `json:"stores,omitempty"`
+}
+
+type ExternalSecretsSyncFromHostConfig struct {
+	// ClusterStores defines if cluster secrets stores should get synced from the host cluster to the virtual cluster.
+	ClusterStores EnableSwitchSelector `json:"clusterStores,omitempty"`
+}
+
+type SelectorConfig struct {
+	Selector StandardLabelSelector `json:"selector,omitempty"`
+}
+
+type EnableSwitchSelector struct {
+	SelectorConfig
 	EnableSwitch
-	// Selector defines what cluster stores should be synced
-	Selector LabelSelector `json:"selector,omitempty"`
 }
 
 type LabelSelector struct {
@@ -514,49 +883,21 @@ type APIServiceService struct {
 	Port int `json:"port,omitempty"`
 }
 
-// ExternalConfig holds external tool configuration
-type ExternalConfig map[string]interface{}
-
 func (c *Config) UnmarshalYAMLStrict(data []byte) error {
 	return UnmarshalYAMLStrict(data, c)
 }
 
-func (c *Config) GetPlatformConfig() (*PlatformConfig, error) {
-	if c.External == nil {
-		return &PlatformConfig{}, nil
-	}
-	if c.External["platform"] == nil {
-		return &PlatformConfig{}, nil
+// GetPlatform returns the platform configuration from the new top-level field.
+func (c *Config) GetPlatformConfig() *vclusterconfig.Platform {
+	if c.Platform != nil {
+		return c.Platform
 	}
 
-	yamlBytes, err := yaml.Marshal(c.External["platform"])
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidConfig, err)
-	}
-
-	retConfig := &PlatformConfig{}
-	if err := yaml.Unmarshal(yamlBytes, retConfig); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidConfig, err)
-	}
-
-	return retConfig, nil
+	return &vclusterconfig.Platform{}
 }
 
 func (c *Config) SetPlatformConfig(platformConfig *PlatformConfig) error {
-	yamlBytes, err := yaml.Marshal(platformConfig)
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidConfig, err)
-	}
-
-	setConfig := ExternalConfig{}
-	if err := yaml.Unmarshal(yamlBytes, &setConfig); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidConfig, err)
-	}
-
-	if c.External == nil {
-		c.External = map[string]ExternalConfig{}
-	}
-	c.External["platform"] = setConfig
+	c.Platform = platformConfig
 	return nil
 }
 
@@ -583,41 +924,42 @@ func (c *Config) EmbeddedDatabase() bool {
 	return !c.ControlPlane.BackingStore.Database.External.Enabled && !c.ControlPlane.BackingStore.Etcd.Embedded.Enabled && !c.ControlPlane.BackingStore.Etcd.Deploy.Enabled && !c.ControlPlane.BackingStore.Etcd.External.Enabled
 }
 
-func (c *Config) Distro() string {
-	if c.ControlPlane.Distro.K3S.Enabled {
-		return K3SDistro
-	} else if c.ControlPlane.Distro.K8S.Enabled {
-		return K8SDistro
-	}
-
-	return K8SDistro
+func (c *Config) IsDockerRegistryDaemonEnabled() bool {
+	return c.Experimental.Docker.Enabled && c.Experimental.Docker.RegistryProxy.Enabled
 }
 
 func (c *Config) IsVirtualSchedulerEnabled() bool {
-	return c.Distro() == K8SDistro && c.ControlPlane.Distro.K8S.Scheduler.Enabled ||
-		c.ControlPlane.Advanced.VirtualScheduler.Enabled
+	return c.ControlPlane.Distro.K8S.Scheduler.Enabled || c.ControlPlane.Advanced.VirtualScheduler.Enabled
 }
 
 func (c *Config) IsConfiguredForSleepMode() bool {
-	if c != nil && c.External != nil && c.External["platform"] == nil {
+	if c == nil {
 		return false
 	}
 
-	return c.External["platform"]["autoSleep"] != nil || c.External["platform"]["autoDelete"] != nil
+	return c.Sleep != nil
+}
+
+func (c *Config) IsConfiguredForAutoDeletion() bool {
+	if c == nil || c.Deletion == nil {
+		return false
+	}
+
+	return c.Deletion.Auto != nil
 }
 
 // ValidateChanges checks for disallowed config changes.
 func ValidateChanges(oldCfg, newCfg *Config) error {
-	if err := ValidateDistroChanges(newCfg.Distro(), oldCfg.Distro()); err != nil {
-		return err
-	}
 	if err := ValidateStoreChanges(newCfg.BackingStoreType(), oldCfg.BackingStoreType()); err != nil {
 		return err
 	}
-
 	if err := ValidateNamespaceSyncChanges(oldCfg, newCfg); err != nil { //nolint:revive
 		return err
 	}
+	if err := ValidateVPNChanges(oldCfg, newCfg); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -649,14 +991,6 @@ func ValidateStoreChanges(currentStoreType, previousStoreType StoreType) error {
 		" please make sure to not switch between vCluster stores", previousStoreType, currentStoreType)
 }
 
-// ValidateDistroChanges checks whether migrating from one distro to the other is allowed.
-func ValidateDistroChanges(currentDistro, previousDistro string) error {
-	if currentDistro != previousDistro && !(previousDistro == "eks" && currentDistro == K8SDistro) && !(previousDistro == K3SDistro && currentDistro == K8SDistro) {
-		return fmt.Errorf("seems like you were using %s as a distro before and now have switched to %s, please make sure to not switch between vCluster distros", previousDistro, currentDistro)
-	}
-	return nil
-}
-
 func ValidateNamespaceSyncChanges(oldCfg, newCfg *Config) error {
 	oldNamespaceConf := oldCfg.Sync.ToHost.Namespaces
 	newNamespaceConf := newCfg.Sync.ToHost.Namespaces
@@ -680,6 +1014,18 @@ func ValidateNamespaceSyncChanges(oldCfg, newCfg *Config) error {
 	return nil
 }
 
+func ValidateVPNChanges(oldCfg *Config, newCfg *Config) error {
+	if oldCfg.PrivateNodes.VPN.Enabled != newCfg.PrivateNodes.VPN.Enabled {
+		return fmt.Errorf("privateNodes.vpn.enabled is not allowed to be changed")
+	}
+
+	if oldCfg.PrivateNodes.VPN.NodeToNode.Enabled != newCfg.PrivateNodes.VPN.NodeToNode.Enabled {
+		return fmt.Errorf("privateNodes.vpn.nodeToNode.enabled is not allowed to be changed")
+	}
+
+	return nil
+}
+
 func (c *Config) IsProFeatureEnabled() bool {
 	if os.Getenv("SKIP_VALIDATE_PRO_FEATURES") == "true" {
 		return false
@@ -693,10 +1039,8 @@ func (c *Config) IsProFeatureEnabled() bool {
 		return true
 	}
 
-	if c.Distro() == K8SDistro {
-		if c.ControlPlane.BackingStore.Database.External.Enabled {
-			return true
-		}
+	if c.ControlPlane.BackingStore.Database.External.Enabled {
+		return true
 	}
 
 	if c.ControlPlane.BackingStore.Etcd.Embedded.Enabled {
@@ -711,15 +1055,7 @@ func (c *Config) IsProFeatureEnabled() bool {
 		return true
 	}
 
-	if c.Experimental.IsolatedControlPlane.Enabled {
-		return true
-	}
-
 	if len(c.Experimental.DenyProxyRequests) > 0 {
-		return true
-	}
-
-	if len(c.External["platform"]) > 0 {
 		return true
 	}
 
@@ -732,6 +1068,39 @@ func (c *Config) IsProFeatureEnabled() bool {
 	}
 
 	if c.Sync.ToHost.Pods.HybridScheduling.Enabled {
+		return true
+	}
+
+	// private nodes is allowed in standalone mode
+	if c.PrivateNodes.Enabled && !c.ControlPlane.Standalone.Enabled {
+		return true
+	}
+
+	if c.Sync.ToHost.ResourceClaimTemplates.Enabled {
+		return true
+	}
+
+	if c.Sync.ToHost.ResourceClaims.Enabled {
+		return true
+	}
+
+	if c.Sync.FromHost.DeviceClasses.Enabled {
+		return true
+	}
+
+	if c.Sleep != nil {
+		return true
+	}
+
+	if c.Snapshots != nil {
+		return true
+	}
+
+	if c.Deletion != nil {
+		return true
+	}
+
+	if c.Platform != nil {
 		return true
 	}
 
@@ -864,6 +1233,9 @@ type SyncToHost struct {
 	// Endpoints defines if endpoints created within the virtual cluster should get synced to the host cluster.
 	Endpoints EnableSwitchWithPatches `json:"endpoints,omitempty"`
 
+	// EndpointSlices defines if endpointslices created within the virtual cluster should get synced to the host cluster.
+	EndpointSlices EnableSwitchWithPatches `json:"endpointSlices,omitempty"`
+
 	// NetworkPolicies defines if network policies created within the virtual cluster should get synced to the host cluster.
 	NetworkPolicies EnableSwitchWithPatches `json:"networkPolicies,omitempty"`
 
@@ -897,6 +1269,12 @@ type SyncToHost struct {
 
 	// Namespaces defines if namespaces created within the virtual cluster should get synced to the host cluster.
 	Namespaces SyncToHostNamespaces `json:"namespaces,omitempty"`
+
+	// ResourceClaim defines if resource claims created within the virtual cluster should get synced to the host cluster.
+	ResourceClaims EnableSwitchWithPatches `json:"resourceClaims,omitempty"`
+
+	// ResourceClaimTemplates defines if resourceClaimTemplates created within the virtual cluster should get synced to the host cluster.
+	ResourceClaimTemplates EnableSwitchWithPatches `json:"resourceClaimTemplates,omitempty"`
 }
 
 type EnableSwitchWithPatches struct {
@@ -978,9 +1356,17 @@ type SyncFromHost struct {
 
 	// Secrets defines if secrets in the host should get synced to the virtual cluster.
 	Secrets EnableSwitchWithResourcesMappings `json:"secrets,omitempty"`
+
+	// DeviceClasses defines if device classes in the host should get synced to the virtual cluster
+	DeviceClasses EnableSwitchWithPatchesAndSelector `json:"deviceClasses,omitempty"`
 }
 
 type StandardLabelSelector v1.LabelSelector
+
+func (s StandardLabelSelector) Empty() bool {
+	selector, err := s.ToSelector()
+	return err == nil && selector.Empty()
+}
 
 func (s StandardLabelSelector) Matches(obj client.Object) (bool, error) {
 	selector, err := s.ToSelector()
@@ -1173,7 +1559,7 @@ type SyncRewriteHosts struct {
 
 type SyncRewriteHostsInitContainer struct {
 	// Image is the image virtual cluster should use to rewrite this FQDN.
-	Image string `json:"image,omitempty"`
+	Image Image `json:"image,omitempty"`
 
 	// Resources are the resources that should be assigned to the init container for each stateful set init container.
 	Resources Resources `json:"resources,omitempty"`
@@ -1422,6 +1808,9 @@ type ControlPlane struct {
 	// Ingress defines options for vCluster ingress deployed by Helm.
 	Ingress ControlPlaneIngress `json:"ingress,omitempty"`
 
+	// TLSRoute defines options for vCluster TLS route deployed by Helm.
+	TLSRoute ControlPlaneTLSRoute `json:"tlsRoute,omitempty"`
+
 	// Service defines options for vCluster service deployed by Helm.
 	Service ControlPlaneService `json:"service,omitempty"`
 
@@ -1437,6 +1826,37 @@ type ControlPlane struct {
 
 func (c ControlPlane) JSONSchemaExtend(base *jsonschema.Schema) {
 	addProToJSONSchema(base, reflect.TypeOf(c))
+}
+
+type ControlPlaneTLSRoute struct {
+	// Enabled defines if the control plane should be exposed via a gateway api tls route. Make sure to enable tls passthrough in the gateway via tls.mode to "Passthrough"
+	Enabled bool `json:"enabled,omitempty"`
+
+	// APIVersion is the version of the gateway api tls route.
+	APIVersion string `json:"apiVersion,omitempty"`
+
+	// Host is the host where vCluster will be reachable
+	Host string `json:"host,omitempty"`
+
+	// ParentRefs are the parent references for the TLS route
+	ParentRefs []map[string]interface{} `json:"parentRefs,omitempty"`
+
+	// Spec allows you to configure extra tls route options.
+	Spec map[string]interface{} `json:"spec,omitempty"`
+
+	LabelsAndAnnotations `json:",inline"`
+}
+
+type KubeVip struct {
+	// Enabled defines if embedded kube-vip should be enabled.
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Interface is the network interface on which the VIP is announced.
+	Interface string `json:"interface,omitempty"`
+
+	// Gateway is the gateway address in CIDR notation (e.g., 10.100.0.1/24).
+	// This is used to configure policy-based routing for the VIP and must include the subnet prefix.
+	Gateway string `json:"gateway,omitempty"`
 }
 
 type ControlPlaneStatefulSet struct {
@@ -1467,7 +1887,9 @@ type ControlPlaneStatefulSet struct {
 	Pods LabelsAndAnnotations `json:"pods,omitempty"`
 
 	// Image is the image for the controlPlane statefulSet container
-	Image StatefulSetImage `json:"image,omitempty"`
+	// It defaults to the vCluster pro repository that includes the optional pro modules that are turned off by default.
+	// If you still want to use the pure OSS build, set the repository to 'loft-sh/vcluster-oss'.
+	Image Image `json:"image,omitempty"`
 
 	// ImagePullPolicy is the policy how to pull the image.
 	ImagePullPolicy string `json:"imagePullPolicy,omitempty"`
@@ -1489,33 +1911,30 @@ type ControlPlaneStatefulSet struct {
 
 	// Specifies the DNS parameters of a pod.
 	DNSConfig *PodDNSConfig `json:"dnsConfig,omitempty"`
+
+	// InitContainers are additional init containers for the statefulSet.
+	InitContainers []interface{} `json:"initContainers,omitempty"`
+
+	// SidecarContainers are additional sidecar containers for the statefulSet.
+	SidecarContainers []interface{} `json:"sidecarContainers,omitempty"`
+
+	// HostAliases allows you to add custom entries to the /etc/hosts file of each Pod created.
+	HostAliases []corev1.HostAlias `json:"hostAliases,omitempty"`
+
+	// RuntimeClassName is the runtime class to set for the statefulSet pods.
+	RuntimeClassName string `json:"runtimeClassName,omitempty"`
 }
 
 type Distro struct {
 	// K8S holds K8s relevant configuration.
 	K8S DistroK8s `json:"k8s,omitempty"`
-
-	// [Deprecated] K3S holds K3s relevant configuration.
-	K3S DistroK3s `json:"k3s,omitempty"`
-}
-
-type DistroK3s struct {
-	// Enabled specifies if the K3s distro should be enabled. Only one distro can be enabled at the same time.
-	Enabled bool `json:"enabled,omitempty"`
-
-	// Token is the K3s token to use. If empty, vCluster will choose one.
-	Token string `json:"token,omitempty"`
-
-	DistroCommon    `json:",inline"`
-	DistroContainer `json:",inline"`
 }
 
 type DistroK8s struct {
 	// Enabled specifies if the K8s distro should be enabled. Only one distro can be enabled at the same time.
 	Enabled bool `json:"enabled,omitempty"`
 
-	// [Deprecated] Version field is deprecated.
-	// Use controlPlane.distro.k8s.image.tag to specify the Kubernetes version instead.
+	// Version is the Kubernetes version to use.
 	Version string `json:"version,omitempty"`
 
 	// APIServer holds configuration specific to starting the api server.
@@ -1524,7 +1943,7 @@ type DistroK8s struct {
 	// ControllerManager holds configuration specific to starting the controller manager.
 	ControllerManager DistroContainerEnabled `json:"controllerManager,omitempty"`
 
-	// Scheduler holds configuration specific to starting the scheduler. Enable this via controlPlane.advanced.virtualScheduler.enabled
+	// Scheduler holds configuration specific to starting the scheduler.
 	Scheduler DistroContainerEnabled `json:"scheduler,omitempty"`
 
 	DistroCommon `json:",inline"`
@@ -1546,13 +1965,6 @@ type DistroCommon struct {
 	// Security options can be used for the distro init container
 	SecurityContext map[string]interface{} `json:"securityContext,omitempty"`
 }
-type DistroContainer struct {
-	// Command is the command to start the distro binary. This will override the existing command.
-	Command []string `json:"command,omitempty"`
-
-	// ExtraArgs are additional arguments to pass to the distro binary.
-	ExtraArgs []string `json:"extraArgs,omitempty"`
-}
 
 type DistroContainerEnabled struct {
 	// Enabled signals this container should be enabled.
@@ -1565,20 +1977,6 @@ type DistroContainerEnabled struct {
 	ExtraArgs []string `json:"extraArgs,omitempty"`
 }
 
-type StatefulSetImage struct {
-	// Configure the registry of the container image, e.g. my-registry.com or ghcr.io
-	// It defaults to ghcr.io and can be overriding either by using this field or controlPlane.advanced.defaultImageRegistry
-	Registry string `json:"registry,omitempty"`
-
-	// Configure the repository of the container image, e.g. my-repo/my-image.
-	// It defaults to the vCluster pro repository that includes the optional pro modules that are turned off by default.
-	// If you still want to use the pure OSS build, use 'loft-sh/vcluster-oss' instead.
-	Repository string `json:"repository,omitempty"`
-
-	// Tag is the tag of the container image, e.g. latest
-	Tag string `json:"tag,omitempty"`
-}
-
 type Image struct {
 	// Registry is the registry of the container image, e.g. my-registry.com or ghcr.io. This setting can be globally
 	// overridden via the controlPlane.advanced.defaultImageRegistry option. Empty means docker hub.
@@ -1587,8 +1985,62 @@ type Image struct {
 	// Repository is the repository of the container image, e.g. my-repo/my-image
 	Repository string `json:"repository,omitempty"`
 
-	// Tag is the tag of the container image, e.g. latest. If set to the default, it will use the host Kubernetes version.
+	// Tag is the tag of the container image, and is the default version.
 	Tag string `json:"tag,omitempty"`
+}
+
+// UnmarshalJSON makes the schema change from string to Image backwards compatible
+func (i *Image) UnmarshalJSON(data []byte) error {
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		ParseImageRef(str, i)
+		return nil
+	}
+
+	type Alias Image
+	var aux Alias
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*i = Image(aux)
+	return nil
+}
+
+// UnmarshalYAML makes the schema change from string to Image backwards compatible
+func (i *Image) UnmarshalYAML(node *yamlv3.Node) error {
+	if node.Kind == yamlv3.ScalarNode {
+		ParseImageRef(node.Value, i)
+		return nil
+	}
+
+	type Alias Image
+	var aux Alias
+	if err := node.Decode(&aux); err != nil {
+		return err
+	}
+	*i = Image(aux)
+	return nil
+}
+
+func (i *Image) String() (ref string) {
+	if i == nil {
+		return
+	}
+
+	if i.Registry != "" {
+		ref = i.Registry + "/"
+	}
+
+	if i.Registry != "" && i.Repository != "" && !strings.ContainsRune(i.Repository, '/') {
+		ref += "library/"
+	}
+	ref += i.Repository
+
+	if i.Tag != "" {
+		ref += ":" + i.Tag
+	}
+
+	return ref
 }
 
 type ImagePullSecretName struct {
@@ -1644,10 +2096,15 @@ type DatabaseKine struct {
 	Enabled bool `json:"enabled,omitempty"`
 
 	// DataSource is the kine dataSource to use for the database. This depends on the database format.
-	// This is optional for the embedded database. Examples:
-	// * mysql: mysql://username:password@tcp(hostname:3306)/k3s
-	// * postgres: postgres://username:password@hostname:5432/k3s
+	// This is optional for the external database. Examples:
+	// * mysql: mysql://username:password@tcp(hostname:3306)/vcluster
+	// * postgres: postgres://username:password@hostname:5432/vcluster
 	DataSource string `json:"dataSource,omitempty"`
+
+	// IdentityProvider is the kine identity provider to use when generating temporary authentication tokens for enhanced security.
+	// This is optional for the external database. Examples:
+	// * aws: RDS IAM Authentication
+	IdentityProvider string `json:"identityProvider,omitempty"`
 
 	// KeyFile is the key file to use for the database. This is optional.
 	KeyFile string `json:"keyFile,omitempty"`
@@ -1949,8 +2406,33 @@ type ControlPlaneAdvanced struct {
 	// Konnectivity holds dedicated konnectivity configuration. This is only available when privateNodes.enabled is true.
 	Konnectivity Konnectivity `json:"konnectivity,omitempty"`
 
+	// Registry allows enabling an embedded docker image registry in vCluster. This is useful for air-gapped environments or when you don't have a public registry available to distribute images.
+	Registry Registry `json:"registry,omitempty"`
+
+	// CloudControllerManager holds configuration for the embedded cloud controller manager. This is only available when private nodes are enabled.
+	// The cloud controller manager is responsible for setting the node's ip addresses as well as the provider id for the node and other node metadata.
+	CloudControllerManager CloudControllerManager `json:"cloudControllerManager,omitempty"`
+
 	// GlobalMetadata is metadata that will be added to all resources deployed by Helm.
 	GlobalMetadata ControlPlaneGlobalMetadata `json:"globalMetadata,omitempty"`
+
+	// KubeVip holds configuration for embedded kube-vip that announces the virtual cluster endpoint IP on layer 2.
+	KubeVip KubeVip `json:"kubeVip,omitempty"`
+
+	// PodDisruptionBudget limits how many pods of an application can be voluntarily disrupted at once
+	// to ensure availability during maintenance or scaling operations.
+	PodDisruptionBudget PodDisruptionBudget `json:"podDisruptionBudget,omitempty"`
+}
+
+type Registry struct {
+	// Enabled defines if the embedded registry should be enabled.
+	Enabled bool `json:"enabled,omitempty"`
+
+	// AnonymousPull allows enabling anonymous pull for the embedded registry. This allows anybody to pull images from the registry without authentication.
+	AnonymousPull bool `json:"anonymousPull,omitempty"`
+
+	// Config is the regular docker registry config. See https://distribution.github.io/distribution/about/configuration/ for more details.
+	Config interface{} `json:"config,omitempty"`
 }
 
 type ControlPlaneHeadlessService struct {
@@ -1959,6 +2441,38 @@ type ControlPlaneHeadlessService struct {
 
 	// Labels are extra labels for this resource.
 	Labels map[string]string `json:"labels,omitempty"`
+}
+
+type Proxy struct {
+	// CustomResources is a map of resource keys (format: "kind.apiGroup/version") to proxy configuration
+	CustomResources map[string]CustomResourceProxy `json:"customResources,omitempty"`
+}
+
+type AccessResourcesMode string
+
+const (
+	AccessResourcesModeOwned AccessResourcesMode = "owned"
+	AccessResourcesModeAll   AccessResourcesMode = "all"
+)
+
+type CustomResourceProxy struct {
+	// Enabled defines if this resource proxy should be enabled
+	Enabled bool `json:"enabled,omitempty"`
+
+	// TargetVirtualCluster is the target virtual cluster for the custom resource proxy
+	TargetVirtualCluster VirtualClusterRef `json:"targetVirtualCluster"`
+
+	// AccessResources defines which resources should be accessible in the proxy.
+	AccessResources AccessResourcesMode `json:"accessResources,omitempty"`
+}
+
+// VirtualClusterRef is a reference to a virtual cluster within the platform.
+type VirtualClusterRef struct {
+	// Name is the name of the target virtual cluster.
+	Name string `json:"name" jsonschema:"required,minLength=1,pattern=^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"`
+
+	// Project is the project of the target virtual cluster. If empty, defaults to the same project as the source vCluster.
+	Project string `json:"project,omitempty" jsonschema:"pattern=^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"`
 }
 
 type ExternalEtcdPersistence struct {
@@ -2191,6 +2705,22 @@ type ControlPlaneGlobalMetadata struct {
 	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
+type PodDisruptionBudget struct {
+	// Enabled defines if the pod disruption budget should be enabled.
+	Enabled bool `json:"enabled,omitempty"`
+	// MinAvailable describes the minimal number or percentage of available pods.
+	MinAvailable interface{} `json:"minAvailable,omitempty"`
+	// MaxUnavailable describes the minimal number or percentage of unavailable pods.
+	MaxUnavailable interface{} `json:"maxUnavailable,omitempty"`
+	// UnhealthyPodEvictionPolicy defines the criteria when unhealthy pods should be considered for eviction.
+	// Currently supported values are:
+	// * IfHealthyBudget - pods that are in the Running phase but not yet healthy are considered disrupted
+	//	and may be evicted even if the PodDisruptionBudget criteria are not met.
+	// * AlwaysAllow - pods that are in the Running phase but not yet healthy are considered disrupted
+	//	and can be evicted regardless of whether the criteria in a PDB is met.
+	UnhealthyPodEvictionPolicy *policyv1.UnhealthyPodEvictionPolicyType `json:"unhealthyPodEvictionPolicy,omitempty"`
+}
+
 type LabelsAndAnnotations struct {
 	// Annotations are extra annotations for this resource.
 	Annotations map[string]string `json:"annotations,omitempty"`
@@ -2261,39 +2791,163 @@ type NetworkPolicy struct {
 	// Enabled defines if the network policy should be deployed by vCluster.
 	Enabled bool `json:"enabled,omitempty"`
 
+	LabelsAndAnnotations `json:",inline"`
+
 	// FallbackDNS is the fallback DNS server to use if the virtual cluster does not have a DNS server.
 	FallbackDNS string `json:"fallbackDns,omitempty"`
 
-	// OutgoingConnections are the outgoing connections options for the vCluster workloads.
-	OutgoingConnections OutgoingConnections `json:"outgoingConnections,omitempty"`
+	// ControlPlane network policy rules
+	ControlPlane NetworkPolicyControlPlane `json:"controlPlane,omitempty"`
 
-	// ExtraControlPlaneRules are extra allowed rules for the vCluster control plane.
-	ExtraControlPlaneRules []map[string]interface{} `json:"extraControlPlaneRules,omitempty"`
-
-	// ExtraWorkloadRules are extra allowed rules for the vCluster workloads.
-	ExtraWorkloadRules []map[string]interface{} `json:"extraWorkloadRules,omitempty"`
-
-	LabelsAndAnnotations `json:",inline"`
+	// Workload network policy rules
+	Workload NetworkPolicyWorkload `json:"workload,omitempty"`
 }
 
+type NetworkPolicyControlPlane struct {
+	// Ingress rules for the vCluster control plane.
+	Ingress []NetworkPolicyIngressRule `json:"ingress,omitempty"`
+
+	// Egress rules for the vCluster control plane.
+	Egress []NetworkPolicyEgressRule `json:"egress,omitempty"`
+}
+
+type NetworkPolicyWorkload struct {
+	// PublicEgress holds the public outgoing connections options for the vCluster workloads.
+	PublicEgress NetworkPolicyWorkloadPublicEgress `json:"publicEgress,omitempty"`
+
+	// Ingress rules for the vCluster workloads.
+	Ingress []NetworkPolicyIngressRule `json:"ingress,omitempty"`
+
+	// Egress rules for the vCluster workloads.
+	Egress []NetworkPolicyEgressRule `json:"egress,omitempty"`
+}
+
+// NetworkPolicyIngressRule describes a particular set of traffic that is allowed to the pods
+// matched by a NetworkPolicySpec's podSelector. The traffic must match both ports and from.
+type NetworkPolicyIngressRule struct {
+	// ports is a list of ports which should be made accessible on the pods selected for
+	// this rule. Each item in this list is combined using a logical OR. If this field is
+	// empty or missing, this rule matches all ports (traffic not restricted by port).
+	// If this field is present and contains at least one item, then this rule allows
+	// traffic only if the traffic matches at least one port in the list.
+	// +optional
+	// +listType=atomic
+	Ports []NetworkPolicyPort `json:"ports,omitempty"`
+
+	// from is a list of sources which should be able to access the pods selected for this rule.
+	// Items in this list are combined using a logical OR operation. If this field is
+	// empty or missing, this rule matches all sources (traffic not restricted by
+	// source). If this field is present and contains at least one item, this rule
+	// allows traffic only if the traffic matches at least one item in the from list.
+	// +optional
+	// +listType=atomic
+	From []NetworkPolicyPeer `json:"from,omitempty"`
+}
+
+// NetworkPolicyEgressRule describes a particular set of traffic that is allowed out of pods
+// matched by a NetworkPolicySpec's podSelector. The traffic must match both ports and to.
+// This type is beta-level in 1.8
+type NetworkPolicyEgressRule struct {
+	// ports is a list of destination ports for outgoing traffic.
+	// Each item in this list is combined using a logical OR. If this field is
+	// empty or missing, this rule matches all ports (traffic not restricted by port).
+	// If this field is present and contains at least one item, then this rule allows
+	// traffic only if the traffic matches at least one port in the list.
+	// +optional
+	// +listType=atomic
+	Ports []NetworkPolicyPort `json:"ports,omitempty"`
+
+	// to is a list of destinations for outgoing traffic of pods selected for this rule.
+	// Items in this list are combined using a logical OR operation. If this field is
+	// empty or missing, this rule matches all destinations (traffic not restricted by
+	// destination). If this field is present and contains at least one item, this rule
+	// allows traffic only if the traffic matches at least one item in the to list.
+	// +optional
+	// +listType=atomic
+	To []NetworkPolicyPeer `json:"to,omitempty"`
+}
+
+// NetworkPolicyPort describes a port to allow traffic on
+type NetworkPolicyPort struct {
+	// protocol represents the protocol (TCP, UDP, or SCTP) which traffic must match.
+	// If not specified, this field defaults to TCP.
+	// +optional
+	Protocol *string `json:"protocol,omitempty"`
+
+	// port represents the port on the given protocol. This can either be a numerical or named
+	// port on a pod. If this field is not provided, this matches all port names and
+	// numbers.
+	// If present, only traffic on the specified protocol AND port will be matched.
+	// +optional
+	Port interface{} `json:"port,omitempty"`
+
+	// endPort indicates that the range of ports from port to endPort if set, inclusive,
+	// should be allowed by the policy. This field cannot be defined if the port field
+	// is not defined or if the port field is defined as a named (string) port.
+	// The endPort must be equal or greater than port.
+	// +optional
+	EndPort *int32 `json:"endPort,omitempty"`
+}
+
+// NetworkPolicyPeer describes a peer to allow traffic to/from. Only certain combinations of
+// fields are allowed
+type NetworkPolicyPeer struct {
+	// podSelector is a label selector which selects pods. This field follows standard label
+	// selector semantics; if present but empty, it selects all pods.
+	//
+	// If namespaceSelector is also set, then the NetworkPolicyPeer as a whole selects
+	// the pods matching podSelector in the Namespaces selected by NamespaceSelector.
+	// Otherwise it selects the pods matching podSelector in the policy's own namespace.
+	// +optional
+	PodSelector *StandardLabelSelector `json:"podSelector,omitempty"`
+
+	// namespaceSelector selects namespaces using cluster-scoped labels. This field follows
+	// standard label selector semantics; if present but empty, it selects all namespaces.
+	//
+	// If podSelector is also set, then the NetworkPolicyPeer as a whole selects
+	// the pods matching podSelector in the namespaces selected by namespaceSelector.
+	// Otherwise it selects all pods in the namespaces selected by namespaceSelector.
+	// +optional
+	NamespaceSelector *StandardLabelSelector `json:"namespaceSelector,omitempty"`
+
+	// ipBlock defines policy on a particular IPBlock. If this field is set then
+	// neither of the other fields can be.
+	// +optional
+	IPBlock *IPBlock `json:"ipBlock,omitempty"`
+}
+
+type NetworkPolicyWorkloadPublicEgress struct {
+	// Enabled defines if the workload public egress should be enabled or disabled.
+	Enabled bool `json:"enabled,omitempty"`
+
+	// CIDR defines the allowed workload public egress destination.
+	// Valid examples are "0.0.0.0/0", "192.168.1.0/24" or "2001:db8::/64"
+	CIDR string `json:"cidr,omitempty"`
+
+	// Except is a slice of CIDRs that should not be included. Items outside the cidr range will be rejected.
+	// Valid examples are "192.168.1.0/24" or "2001:db8::/64".
+	// +optional
+	Except []string `json:"except,omitempty"`
+}
+
+// OutgoingConnections to be removed via legacyconfig cleanup.
 type OutgoingConnections struct {
 	// IPBlock describes a particular CIDR (Ex. "192.168.1.0/24","2001:db8::/64") that is allowed
 	// to the pods matched by a NetworkPolicySpec's podSelector. The except entry describes CIDRs
 	// that should not be included within this rule.
 	IPBlock IPBlock `json:"ipBlock,omitempty"`
-
-	// Platform enables egress access towards loft platform
-	Platform bool `json:"platform,omitempty"`
 }
 
+// IPBlock describes a particular CIDR (Ex. "192.168.1.0/24","2001:db8::/64") that is allowed
+// to the pods matched by a NetworkPolicySpec's podSelector. The except entry describes CIDRs
+// that should not be included within this rule.
 type IPBlock struct {
-	// cidr is a string representing the IPBlock
-	// Valid examples are "192.168.1.0/24" or "2001:db8::/64"
+	// CIDR defines the allowed workload public egress destination.
+	// Valid examples are "0.0.0.0/0", "192.168.1.0/24" or "2001:db8::/64"
 	CIDR string `json:"cidr,omitempty"`
 
-	// except is a slice of CIDRs that should not be included within an IPBlock
-	// Valid examples are "192.168.1.0/24" or "2001:db8::/64"
-	// Except values will be rejected if they are outside the cidr range
+	// Except is a slice of CIDRs that should not be included. Items outside the cidr range will be rejected.
+	// Valid examples are "192.168.1.0/24" or "2001:db8::/64".
 	// +optional
 	Except []string `json:"except,omitempty"`
 }
@@ -2459,6 +3113,10 @@ type RBAC struct {
 
 	// ClusterRole holds virtual cluster cluster role configuration
 	ClusterRole RBACClusterRole `json:"clusterRole,omitempty"`
+
+	// EnableVolumeSnapshotRules enables all required volume snapshot rules in the Role and
+	// ClusterRole.
+	EnableVolumeSnapshotRules EnableAutoSwitch `json:"enableVolumeSnapshotRules,omitempty"`
 }
 
 type RBACClusterRole struct {
@@ -2500,44 +3158,64 @@ type Experimental struct {
 	// SyncSettings are advanced settings for the syncer controller.
 	SyncSettings ExperimentalSyncSettings `json:"syncSettings,omitempty"`
 
-	// GenericSync holds options to generically sync resources from virtual cluster to host.
-	GenericSync ExperimentalGenericSync `json:"genericSync,omitempty"`
-
-	// IsolatedControlPlane is a feature to run the vCluster control plane in a different Kubernetes cluster than the workloads themselves.
-	IsolatedControlPlane ExperimentalIsolatedControlPlane `json:"isolatedControlPlane,omitempty" product:"pro"`
-
 	// VirtualClusterKubeConfig allows you to override distro specifics and specify where vCluster will find the required certificates and vCluster config.
+	// Deprecated: Removed in 0.29.0.
 	VirtualClusterKubeConfig VirtualClusterKubeConfig `json:"virtualClusterKubeConfig,omitempty"`
 
 	// DenyProxyRequests denies certain requests in the vCluster proxy.
 	DenyProxyRequests []DenyRule `json:"denyProxyRequests,omitempty" product:"pro"`
+
+	// Proxy enables vCluster-to-vCluster proxying of resources
+	Proxy Proxy `json:"proxy,omitempty"`
+
+	// Docker allows you to configure Docker related settings when deploying a vCluster using Docker.
+	Docker ExperimentalDocker `json:"docker,omitempty"`
+
+	// NodeMonitors allows you to create a service monitor for each node.
+	NodeMonitors []ExperimentalNodeMonitor `json:"nodeMonitors,omitempty"`
 }
 
 func (e Experimental) JSONSchemaExtend(base *jsonschema.Schema) {
 	addProToJSONSchema(base, reflect.TypeOf(e))
 }
 
-type ExperimentalIsolatedControlPlane struct {
-	// Enabled specifies if the isolated control plane feature should be enabled.
-	Enabled bool `json:"enabled,omitempty" product:"pro"`
+type ExperimentalNodeMonitor struct {
+	// Name is the name of the monitor. It will be suffixed with the node name.
+	Name string `json:"name,omitempty"`
 
-	// Headless states that Helm should deploy the vCluster in headless mode for the isolated control plane.
-	Headless bool `json:"headless,omitempty"`
+	// NodeSelector defines the node selector for the service monitor.
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
-	// KubeConfig is the path where to find the remote workload cluster kubeconfig.
-	KubeConfig string `json:"kubeConfig,omitempty"`
+	// Endpoints is a list of endpoints to add to the service monitor. By default, vCluster will relabel the node and instance label to the node name.
+	Endpoints []ExperimentalNodeServiceMonitorEndpoint `json:"endpoints,omitempty"`
 
-	// Namespace is the namespace where to sync the workloads into.
-	Namespace string `json:"namespace,omitempty"`
+	// Spec allows you to configure extra service monitor options that will be merged into the spec.
+	Spec map[string]interface{} `json:"spec,omitempty"`
 
-	// Service is the vCluster service in the remote cluster.
-	Service string `json:"service,omitempty"`
+	LabelsAndAnnotations `json:",inline"`
+}
+
+type ExperimentalNodeServiceMonitorEndpoint struct {
+	// Path is the kubelet path of the endpoint. vCluster will prepend /api/v1/nodes/NODE_NAME to the path.
+	Path string `json:"path,omitempty"`
+
+	// Params allows you to configure extra parameters to add to the endpoint.
+	Params map[string][]string `json:"params,omitempty"`
+
+	// ExtraRelabelings allows you to configure extra relabelings to add to the endpoint. By default, vCluster will relabel the node and instance label to the node name.
+	ExtraRelabelings []map[string]interface{} `json:"extraRelabelings,omitempty"`
+
+	// MetricsRelabelings allows you to configure extra metrics relabelings to add to the endpoint.
+	MetricsRelabelings []map[string]interface{} `json:"metricsRelabelings,omitempty"`
+
+	// Interval is the interval at which to scrape the endpoint.
+	Interval string `json:"interval,omitempty"`
+
+	// ScrapeTimeout is the timeout for the scrape of the endpoint.
+	ScrapeTimeout string `json:"scrapeTimeout,omitempty"`
 }
 
 type ExperimentalSyncSettings struct {
-	// TargetNamespace is the namespace where the workloads should get synced to.
-	TargetNamespace string `json:"targetNamespace,omitempty"`
-
 	// SetOwner specifies if vCluster should set an owner reference on the synced objects to the vCluster service. This allows for easy garbage collection.
 	SetOwner bool `json:"setOwner,omitempty"`
 
@@ -2550,6 +3228,59 @@ type ExperimentalSyncSettings struct {
 
 func (e ExperimentalSyncSettings) JSONSchemaExtend(base *jsonschema.Schema) {
 	addProToJSONSchema(base, reflect.TypeOf(e))
+}
+
+type ExperimentalDocker struct {
+	ExperimentalDockerContainer `json:",inline"`
+
+	// Enabled defines if the vCluster was deployed using Docker. This is automatically set by vCluster and should not be set by the user.
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Network defines the network to use for the vCluster. If not specified, the a network will be created for the vCluster.
+	Network string `json:"network,omitempty"`
+
+	// Nodes defines the nodes of the vCluster.
+	Nodes []ExperimentalDockerNode `json:"nodes,omitempty"`
+
+	// Defines if docker images should be pulled from the host docker daemon. This prevents pulling images again and allows to
+	// use purely local images. Only works if containerd image storage is used. For more information, see https://docs.docker.com/engine/storage/containerd
+	RegistryProxy EnableSwitch `json:"registryProxy,omitempty"`
+
+	// Defines if vCluster should configure load balancer services inside the vCluster. This might require
+	// sudo access on the host cluster for docker desktop or rancher desktop on macos.
+	LoadBalancer ExperimentalDockerLoadBalancer `json:"loadBalancer,omitempty"`
+}
+
+type ExperimentalDockerLoadBalancer struct {
+	EnableSwitch `json:",inline"`
+
+	// ForwardPorts defines if the load balancer ips should be made available locally
+	// via port forwarding. This will be only done if necessary for example on macos when using docker desktop.
+	ForwardPorts bool `json:"forwardPorts,omitempty"`
+}
+
+type ExperimentalDockerNode struct {
+	ExperimentalDockerContainer `json:",inline"`
+
+	// Name defines the name of the node. If not specified, a random name will be generated.
+	Name string `json:"name,omitempty"`
+}
+
+type ExperimentalDockerContainer struct {
+	// Image defines the image to use for the container. Defaults to ghcr.io/loft-sh/vm-container.
+	Image string `json:"image,omitempty"`
+
+	// Ports defines extra port mappings to be added to the container.
+	Ports []string `json:"ports,omitempty"`
+
+	// Volumes defines extra volumes to be added to the container.
+	Volumes []string `json:"volumes,omitempty"`
+
+	// Env defines extra environment variables to be added to the container. Use key=value.
+	Env []string `json:"env,omitempty"`
+
+	// Args defines extra arguments to be added to the docker run command of the container.
+	Args []string `json:"args,omitempty"`
 }
 
 type ExperimentalDeploy struct {
@@ -2613,186 +3344,14 @@ type ExperimentalDeployHelmChart struct {
 	Password string `json:"password,omitempty"`
 }
 
-type PlatformConfig struct {
-	// APIKey defines where to find the platform access key and host. By default, vCluster will search in the following locations in this precedence:
-	// * environment variable called LICENSE
-	// * secret specified under external.platform.apiKey.secretName
-	// * secret called "vcluster-platform-api-key" in the vCluster namespace
-	APIKey PlatformAPIKey `json:"apiKey,omitempty"`
+// PlatformConfig is a type alias for the imported vclusterconfig.Platform type.
+// This is kept for backwards compatibility with code that uses PlatformConfig.
+// Deprecated: Use vclusterconfig.Platform directly.
+type PlatformConfig = vclusterconfig.Platform
 
-	// Project specifies which platform project the vcluster should be imported to
-	Project string `json:"project,omitempty"`
-}
-
-// PlatformAPIKey defines where to find the platform access key. The secret key name doesn't matter as long as the secret only contains a single key.
-type PlatformAPIKey struct {
-	// SecretName is the name of the secret where the platform access key is stored. This defaults to vcluster-platform-api-key if undefined.
-	SecretName string `json:"secretName,omitempty"`
-
-	// Namespace defines the namespace where the access key secret should be retrieved from. If this is not equal to the namespace
-	// where the vCluster instance is deployed, you need to make sure vCluster has access to this other namespace.
-	Namespace string `json:"namespace,omitempty"`
-
-	// CreateRBAC will automatically create the necessary RBAC roles and role bindings to allow vCluster to read the secret specified
-	// in the above namespace, if specified.
-	// This defaults to true.
-	CreateRBAC *bool `json:"createRBAC,omitempty"`
-}
-
-type ExperimentalGenericSync struct {
-	// Version is the config version
-	Version string `json:"version,omitempty" yaml:"version,omitempty"`
-
-	// Exports syncs a resource from the virtual cluster to the host
-	Exports []*Export `json:"export,omitempty" yaml:"export,omitempty"`
-
-	// Imports syncs a resource from the host cluster to virtual cluster
-	Imports []*Import `json:"import,omitempty" yaml:"import,omitempty"`
-
-	// Hooks are hooks that can be used to inject custom patches before syncing
-	Hooks *Hooks `json:"hooks,omitempty" yaml:"hooks,omitempty"`
-
-	ClusterRole ExperimentalGenericSyncExtraRules `json:"clusterRole,omitempty"`
-	Role        ExperimentalGenericSyncExtraRules `json:"role,omitempty"`
-}
-
-type ExperimentalGenericSyncExtraRules struct {
-	ExtraRules []interface{} `json:"extraRules,omitempty"`
-}
-
-type Hooks struct {
-	// HostToVirtual is a hook that is executed before syncing from the host to the virtual cluster
-	HostToVirtual []*Hook `json:"hostToVirtual,omitempty" yaml:"hostToVirtual,omitempty"`
-
-	// VirtualToHost is a hook that is executed before syncing from the virtual to the host cluster
-	VirtualToHost []*Hook `json:"virtualToHost,omitempty" yaml:"virtualToHost,omitempty"`
-}
-
-type Hook struct {
-	TypeInformation
-
-	// Verbs are the verbs that the hook should mutate
-	Verbs []string `json:"verbs,omitempty" yaml:"verbs,omitempty"`
-
-	// Patches are the patches to apply on the object to be synced
-	Patches []*Patch `json:"patches,omitempty" yaml:"patches,omitempty"`
-}
-
-type Import struct {
-	SyncBase `json:",inline" yaml:",inline"`
-}
-
-type SyncBase struct {
-	TypeInformation `json:",inline" yaml:",inline"`
-
-	Optional bool `json:"optional,omitempty" yaml:"optional,omitempty"`
-
-	// ReplaceWhenInvalid determines if the controller should try to recreate the object
-	// if there is a problem applying
-	ReplaceWhenInvalid bool `json:"replaceOnConflict,omitempty" yaml:"replaceOnConflict,omitempty"`
-
-	// Patches are the patches to apply on the virtual cluster objects
-	// when syncing them from the host cluster
-	Patches []*Patch `json:"patches,omitempty" yaml:"patches,omitempty"`
-
-	// ReversePatches are the patches to apply to host cluster objects
-	// after it has been synced to the virtual cluster
-	ReversePatches []*Patch `json:"reversePatches,omitempty" yaml:"reversePatches,omitempty"`
-}
-
-type Export struct {
-	SyncBase `json:",inline" yaml:",inline"`
-
-	// Selector is a label selector to select the synced objects in the virtual cluster.
-	// If empty, all objects will be synced.
-	Selector *Selector `json:"selector,omitempty" yaml:"selector,omitempty"`
-}
-
-type TypeInformation struct {
-	// APIVersion of the object to sync
-	APIVersion string `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`
-
-	// Kind of the object to sync
-	Kind string `json:"kind,omitempty" yaml:"kind,omitempty"`
-}
-
-type Selector struct {
-	// LabelSelector are the labels to select the object from
-	LabelSelector map[string]string `json:"labelSelector,omitempty" yaml:"labelSelector,omitempty"`
-}
-
-type Patch struct {
-	// Operation is the type of the patch
-	Operation PatchType `json:"op,omitempty" yaml:"op,omitempty"`
-
-	// FromPath is the path from the other object
-	FromPath string `json:"fromPath,omitempty" yaml:"fromPath,omitempty"`
-
-	// Path is the path of the patch
-	Path string `json:"path,omitempty" yaml:"path,omitempty"`
-
-	// NamePath is the path to the name of a child resource within Path
-	NamePath string `json:"namePath,omitempty" yaml:"namePath,omitempty"`
-
-	// NamespacePath is path to the namespace of a child resource within Path
-	NamespacePath string `json:"namespacePath,omitempty" yaml:"namespacePath,omitempty"`
-
-	// Value is the new value to be set to the path
-	Value interface{} `json:"value,omitempty" yaml:"value,omitempty"`
-
-	// Regex - is regular expresion used to identify the Name,
-	// and optionally Namespace, parts of the field value that
-	// will be replaced with the rewritten Name and/or Namespace
-	Regex       string         `json:"regex,omitempty" yaml:"regex,omitempty"`
-	ParsedRegex *regexp.Regexp `json:"-"               yaml:"-"`
-
-	// Conditions are conditions that must be true for
-	// the patch to get executed
-	Conditions []*PatchCondition `json:"conditions,omitempty" yaml:"conditions,omitempty"`
-
-	// Ignore determines if the path should be ignored if handled as a reverse patch
-	Ignore *bool `json:"ignore,omitempty" yaml:"ignore,omitempty"`
-
-	// Sync defines if a specialized syncer should be initialized using values
-	// from the rewriteName operation as Secret/Configmap names to be synced
-	Sync *PatchSync `json:"sync,omitempty" yaml:"sync,omitempty"`
-}
-
-type PatchType string
-
-const (
-	PatchTypeRewriteName                     PatchType = "rewriteName"
-	PatchTypeRewriteLabelKey                 PatchType = "rewriteLabelKey"
-	PatchTypeRewriteLabelSelector            PatchType = "rewriteLabelSelector"
-	PatchTypeRewriteLabelExpressionsSelector PatchType = "rewriteLabelExpressionsSelector"
-
-	PatchTypeCopyFromObject PatchType = "copyFromObject"
-	PatchTypeAdd            PatchType = "add"
-	PatchTypeReplace        PatchType = "replace"
-	PatchTypeRemove         PatchType = "remove"
-)
-
-type PatchCondition struct {
-	// Path is the path within the object to select
-	Path string `json:"path,omitempty" yaml:"path,omitempty"`
-
-	// SubPath is the path below the selected object to select
-	SubPath string `json:"subPath,omitempty" yaml:"subPath,omitempty"`
-
-	// Equal is the value the path should be equal to
-	Equal interface{} `json:"equal,omitempty" yaml:"equal,omitempty"`
-
-	// NotEqual is the value the path should not be equal to
-	NotEqual interface{} `json:"notEqual,omitempty" yaml:"notEqual,omitempty"`
-
-	// Empty means that the path value should be empty or unset
-	Empty *bool `json:"empty,omitempty" yaml:"empty,omitempty"`
-}
-
-type PatchSync struct {
-	Secret    *bool `json:"secret,omitempty"    yaml:"secret,omitempty"`
-	ConfigMap *bool `json:"configmap,omitempty" yaml:"configmap,omitempty"`
-}
+// PlatformAPIKey is a type alias for the imported vclusterconfig.PlatformAPIKey type.
+// Deprecated: Use vclusterconfig.PlatformAPIKey directly.
+type PlatformAPIKey = vclusterconfig.PlatformAPIKey
 
 type DenyRule struct {
 	// The name of the check.

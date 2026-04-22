@@ -2,11 +2,12 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/loft-sh/log"
 	"github.com/loft-sh/log/survey"
@@ -15,8 +16,6 @@ import (
 	"github.com/loft-sh/vcluster/pkg/lifecycle"
 	"github.com/loft-sh/vcluster/pkg/platform"
 	"github.com/loft-sh/vcluster/pkg/platform/clihelper"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/kubernetes"
 )
 
 type AddVClusterOptions struct {
@@ -28,40 +27,16 @@ type AddVClusterOptions struct {
 	Host                     string
 	CertificateAuthorityData []byte
 	All                      bool
+	External                 bool
 }
 
 func AddVClusterHelm(
 	ctx context.Context,
+	log log.Logger,
 	options *AddVClusterOptions,
 	globalFlags *flags.GlobalFlags,
-	args []string,
-	log log.Logger,
+	vClusters []find.VCluster,
 ) error {
-	var vClusters []find.VCluster
-	if len(args) == 0 && !options.All {
-		return errors.New("empty vCluster name but no --all flag set, please either set vCluster name to add one cluster or set --all flag to add all of them")
-	}
-	if options.All {
-		log.Info("looking for vCluster instances in all namespaces")
-		vClustersInNamespace, err := find.ListVClusters(ctx, globalFlags.Context, "", "", log)
-		if err != nil {
-			return err
-		}
-		if len(vClustersInNamespace) == 0 {
-			log.Infof("no vCluster instances found in context %s", globalFlags.Context)
-		} else {
-			vClusters = append(vClusters, vClustersInNamespace...)
-		}
-	} else {
-		// check if vCluster exists
-		vClusterName := args[0]
-		vCluster, err := find.GetVCluster(ctx, globalFlags.Context, vClusterName, globalFlags.Namespace, log)
-		if err != nil {
-			return err
-		}
-		vClusters = append(vClusters, *vCluster)
-	}
-
 	if len(vClusters) == 0 {
 		return nil
 	}
@@ -98,6 +73,11 @@ func addVClusterHelm(
 	kubeClient *kubernetes.Clientset,
 	log log.Logger,
 ) error {
+	// A scaled-down tenant cluster would show up as Starting in the platform, which is misleading.
+	if vCluster.Status == find.StatusScaledDown {
+		return fmt.Errorf("tenant cluster %s in namespace %s is scaled down to zero replicas, please scale it up before adding it to the platform", vClusterName, vCluster.Namespace)
+	}
+
 	snoozed := false
 	// If the vCluster was paused with the helm driver, adding it to the platform will only create the secret for registration
 	// which leads to confusing behavior for the user since they won't see the cluster in the platform UI until it is resumed.
@@ -161,6 +141,13 @@ func addVClusterHelm(
 		err = lifecycle.DeletePods(ctx, kubeClient, "app=vcluster,release="+vCluster.Name, vCluster.Namespace)
 		if err != nil {
 			return fmt.Errorf("delete vcluster workloads: %w", err)
+		}
+	}
+
+	if !options.External {
+		err = platform.EnablePlatformManagement(ctx, kubeClient, globalFlags.LoadedConfig(log), vCluster.Name, vCluster.Namespace, log)
+		if err != nil {
+			return err
 		}
 	}
 

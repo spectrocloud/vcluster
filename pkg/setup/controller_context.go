@@ -19,6 +19,7 @@ import (
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
 	"github.com/loft-sh/vcluster/pkg/telemetry"
 	"github.com/loft-sh/vcluster/pkg/util/blockingcacheclient"
+	"github.com/loft-sh/vcluster/pkg/util/pluginhookclient"
 	"github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -43,7 +44,7 @@ var NewVirtualManager = ctrl.NewManager
 // NewControllerContext builds the controller context we can use to start the syncer
 func NewControllerContext(ctx context.Context, options *config.VirtualClusterConfig) (*synccontext.ControllerContext, error) {
 	// load virtual config
-	virtualConfig, virtualRawConfig, err := loadVirtualConfig(ctx, options)
+	virtualConfig, virtualRawConfig, err := LoadVirtualConfig(ctx, options)
 	if err != nil {
 		return nil, err
 	}
@@ -71,13 +72,13 @@ func NewControllerContext(ctx context.Context, options *config.VirtualClusterCon
 	// create physical manager
 	var localManager ctrl.Manager
 	if !options.ControlPlane.Standalone.Enabled {
-		klog.Info("Using physical cluster at " + options.WorkloadConfig.Host)
-		localManager, err = NewLocalManager(options.WorkloadConfig, ctrl.Options{
+		klog.Info("Using physical cluster at " + options.HostConfig.Host)
+		localManager, err = NewLocalManager(options.HostConfig, ctrl.Options{
 			Scheme:         scheme.Scheme,
 			Metrics:        metricsserver.Options{BindAddress: localManagerMetrics},
 			LeaderElection: false,
 			Cache:          getLocalCacheOptions(options),
-			NewClient:      pro.NewPhysicalClient(options),
+			NewClient:      pluginhookclient.NewPhysicalPluginClientFactory(blockingcacheclient.NewCacheClient),
 		})
 		if err != nil {
 			return nil, err
@@ -89,7 +90,7 @@ func NewControllerContext(ctx context.Context, options *config.VirtualClusterCon
 		Scheme:         scheme.Scheme,
 		Metrics:        metricsserver.Options{BindAddress: virtualManagerMetrics},
 		LeaderElection: false,
-		NewClient:      pro.NewVirtualClient(options),
+		NewClient:      pluginhookclient.NewVirtualPluginClientFactory(blockingcacheclient.NewCacheClient),
 	})
 	if err != nil {
 		return nil, err
@@ -114,7 +115,7 @@ func getLocalCacheOptions(options *config.VirtualClusterConfig) cache.Options {
 	// is multi namespace mode?
 	defaultNamespaces := make(map[string]cache.Config)
 	if !options.Sync.ToHost.Namespaces.Enabled {
-		defaultNamespaces[options.WorkloadTargetNamespace] = cache.Config{}
+		defaultNamespaces[options.HostNamespace] = cache.Config{}
 	}
 	// do we need access to another namespace to export the kubeconfig ?
 	// we will need access to all the objects that the vcluster usually has access to
@@ -151,7 +152,7 @@ func startPlugins(ctx context.Context, virtualConfig *rest.Config, virtualRawCon
 	return nil
 }
 
-func loadVirtualConfig(ctx context.Context, options *config.VirtualClusterConfig) (*rest.Config, *clientcmdapi.Config, error) {
+func LoadVirtualConfig(ctx context.Context, options *config.VirtualClusterConfig) (*rest.Config, *clientcmdapi.Config, error) {
 	// wait for client config
 	clientConfig, err := waitForClientConfig(ctx, options)
 	if err != nil {
@@ -367,11 +368,7 @@ func initControllerContext(
 	// create a new current namespace client
 	var currentNamespaceClient client.Client
 	if !vClusterOptions.ControlPlane.Standalone.Enabled {
-		currentNamespaceClient, err = newCurrentNamespaceClient(ctx, localManager, vClusterOptions)
-		if err != nil {
-			return nil, err
-		}
-
+		currentNamespaceClient = localManager.GetClient()
 		localDiscoveryClient, err := discovery.NewDiscoveryClientForConfig(localManager.GetConfig())
 		if err != nil {
 			return nil, err
@@ -383,25 +380,29 @@ func initControllerContext(
 		}
 	}
 
-	etcdClient, err := etcd.NewFromConfig(ctx, vClusterOptions)
-	if err != nil {
-		return nil, fmt.Errorf("create etcd client: %w", err)
-	}
-
 	controllerContext := &synccontext.ControllerContext{
-		Context:      ctx,
-		LocalManager: localManager,
+		Context:     ctx,
+		HostManager: localManager,
 
 		VirtualManager:        virtualManager,
 		VirtualRawConfig:      virtualRawConfig,
 		VirtualClusterVersion: virtualClusterVersion,
 
-		EtcdClient: etcdClient,
-
-		WorkloadNamespaceClient: currentNamespaceClient,
+		HostNamespaceClient: currentNamespaceClient,
 
 		StopChan: stopChan,
 		Config:   vClusterOptions,
+	}
+
+	etcdClient, err := etcd.NewFromConfig(ctx, vClusterOptions)
+	if err != nil {
+		return nil, fmt.Errorf("create etcd client: %w", err)
+	}
+	controllerContext.EtcdClient = etcdClient
+
+	if vClusterOptions.PrivateNodes.Enabled {
+		// for private nodes, we don't need to store mappings
+		return controllerContext, nil
 	}
 
 	var localClient client.Client
@@ -421,56 +422,4 @@ func initControllerContext(
 	}
 	controllerContext.Mappings = mappings.NewMappingsRegistry(mappingStore)
 	return controllerContext, nil
-}
-
-func newCurrentNamespaceClient(ctx context.Context, localManager ctrl.Manager, options *config.VirtualClusterConfig) (client.Client, error) {
-	if localManager == nil {
-		return nil, errors.New("nil localManager")
-	}
-	if options == nil {
-		return nil, errors.New("nil options")
-	}
-
-	var err error
-
-	// currentNamespaceCache is needed for tasks such as finding out fake kubelet ips
-	// as those are saved as Kubernetes services inside the same namespace as vcluster
-	// is running. In the case of options.TargetNamespace != currentNamespace (the namespace
-	// where vcluster is currently running in), we need to create a new object cache
-	// as the regular cache is scoped to the options.TargetNamespace and cannot return
-	// objects from the current namespace.
-	currentNamespaceCache := localManager.GetCache()
-	if !options.Sync.ToHost.Namespaces.Enabled && options.WorkloadNamespace != options.WorkloadTargetNamespace {
-		currentNamespaceCache, err = cache.New(localManager.GetConfig(), cache.Options{
-			Scheme:            localManager.GetScheme(),
-			Mapper:            localManager.GetRESTMapper(),
-			DefaultNamespaces: map[string]cache.Config{options.WorkloadNamespace: {}},
-		})
-		if err != nil {
-			return nil, err
-		}
-
-		// start cache now if it's not in the same namespace
-		go func() {
-			err := currentNamespaceCache.Start(ctx)
-			if err != nil {
-				panic(err)
-			}
-		}()
-		currentNamespaceCache.WaitForCacheSync(ctx)
-	}
-
-	// create a current namespace client
-	currentNamespaceClient, err := blockingcacheclient.NewCacheClient(localManager.GetConfig(), client.Options{
-		Scheme: localManager.GetScheme(),
-		Mapper: localManager.GetRESTMapper(),
-		Cache: &client.CacheOptions{
-			Reader: currentNamespaceCache,
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return currentNamespaceClient, nil
 }

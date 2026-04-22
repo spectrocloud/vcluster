@@ -9,6 +9,7 @@ import (
 	"github.com/loft-sh/vcluster/pkg/server"
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
 	syncertypes "github.com/loft-sh/vcluster/pkg/syncer/types"
+	"github.com/loft-sh/vcluster/pkg/util/osutil"
 	"k8s.io/klog/v2"
 )
 
@@ -24,11 +25,12 @@ func StartManagers(ctx *synccontext.RegisterContext) ([]syncertypes.Object, erro
 	}
 
 	// start the local manager
-	if ctx.PhysicalManager != nil {
+	if ctx.HostManager != nil {
 		go func() {
-			err := ctx.PhysicalManager.Start(ctx)
+			err := ctx.HostManager.Start(ctx)
 			if err != nil {
-				panic(err)
+				klog.Errorf("error starting host manager: %v", err)
+				osutil.Exit(1)
 			}
 		}()
 	}
@@ -37,14 +39,15 @@ func StartManagers(ctx *synccontext.RegisterContext) ([]syncertypes.Object, erro
 	go func() {
 		err := ctx.VirtualManager.Start(ctx)
 		if err != nil {
-			panic(err)
+			klog.Errorf("error starting virtual manager: %v", err)
+			osutil.Exit(1)
 		}
 	}()
 
 	// Wait for caches to be synced
-	if ctx.PhysicalManager != nil {
+	if ctx.HostManager != nil {
 		klog.FromContext(ctx).Info("Starting local manager...")
-		ctx.PhysicalManager.GetCache().WaitForCacheSync(ctx)
+		ctx.HostManager.GetCache().WaitForCacheSync(ctx)
 	}
 	klog.FromContext(ctx).Info("Starting virtual manager...")
 	ctx.VirtualManager.GetCache().WaitForCacheSync(ctx)

@@ -635,6 +635,31 @@ func TestValidateExportKubeConfig(t *testing.T) {
 			},
 			expectedError: errExportKubeConfigAdditionalSecretWithoutNameAndNamespace,
 		},
+		{
+			name: "Setting only exportKubeConfig.server is invalid",
+			exportKubeConfig: config.ExportKubeConfig{
+				ExportKubeConfigProperties: config.ExportKubeConfigProperties{
+					Server: "my-server",
+				},
+			},
+			expectedError: errExportKubeConfigServerNotValid,
+		},
+		{
+			name: "Setting only exportKubeConfig.server is valid with https://",
+			exportKubeConfig: config.ExportKubeConfig{
+				ExportKubeConfigProperties: config.ExportKubeConfigProperties{
+					Server: "https://my-server.com",
+				},
+			},
+		},
+		{
+			name: "Setting only exportKubeConfig.server is valid with https:// and port",
+			exportKubeConfig: config.ExportKubeConfig{
+				ExportKubeConfigProperties: config.ExportKubeConfigProperties{
+					Server: "https://my-server.com:443",
+				},
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -1075,10 +1100,19 @@ func TestValidateToHostSyncAndExternalSecretsIntegration(t *testing.T) {
 	externalSecretsEnabled := config.ExternalSecrets{
 		Enabled: true,
 		Sync: config.ExternalSecretsSync{
-			ExternalSecrets: config.EnableSwitch{Enabled: true},
-			Stores:          config.EnableSwitch{Enabled: true},
-			ClusterStores: config.ClusterStoresSyncConfig{
-				EnableSwitch: config.EnableSwitch{Enabled: true},
+			ToHost: config.ExternalSecretsSyncToHostConfig{
+				Stores: config.EnableSwitchSelector{
+					EnableSwitch: config.EnableSwitch{
+						Enabled: true,
+					},
+				},
+			},
+			FromHost: config.ExternalSecretsSyncFromHostConfig{
+				ClusterStores: config.EnableSwitchSelector{
+					EnableSwitch: config.EnableSwitch{
+						Enabled: true,
+					},
+				},
 			},
 		},
 	}
@@ -1300,6 +1334,18 @@ func TestValidateToHostNamespaceSyncMappings(t *testing.T) {
 			},
 			checkErr: noErrExpected,
 		},
+		{
+			name: "Invalid: Host mapping is a catch-all wildcard",
+			vclusterConfig: &VirtualClusterConfig{
+				Name: "test-vc",
+				Config: config.Config{
+					Sync: config.Sync{ToHost: config.SyncToHost{Namespaces: config.SyncToHostNamespaces{
+						Enabled:  true,
+						Mappings: config.FromHostMappings{ByName: map[string]string{"*": "*"}},
+					}}},
+				},
+			},
+			checkErr: expectErr("config.sync.toHost.namespaces.mappings.byName: host pattern mappings must use a prefix before wildcard: *")},
 		{
 			name: "Invalid: Mismatched types (exact-to-pattern)",
 			vclusterConfig: &VirtualClusterConfig{
@@ -1688,6 +1734,344 @@ func TestValidateToHostNamespaceSyncMappings(t *testing.T) {
 	}
 }
 
+func TestValidateAdvancedControlPlaneConfig(t *testing.T) {
+	type testCase struct {
+		name           string
+		vclusterConfig *VirtualClusterConfig
+		checkErr       func(t *testing.T, err error)
+	}
+
+	testCases := []testCase{
+		{
+			name: "Invalid: PodDisruptionBudget with both minAvailable and maxUnavailable set",
+			vclusterConfig: &VirtualClusterConfig{
+				Config: config.Config{
+					ControlPlane: config.ControlPlane{
+						Advanced: config.ControlPlaneAdvanced{
+							PodDisruptionBudget: config.PodDisruptionBudget{
+								Enabled:        true,
+								MinAvailable:   1,
+								MaxUnavailable: "50%",
+							},
+						},
+					},
+				},
+			},
+			checkErr: expectErr("minAvailable and maxUnavailable cannot be used together in a podDisruptionBudget"),
+		},
+		{
+			name: "Valid: PodDisruptionBudget with only minAvailable set",
+			vclusterConfig: &VirtualClusterConfig{
+				Config: config.Config{
+					ControlPlane: config.ControlPlane{
+						Advanced: config.ControlPlaneAdvanced{
+							PodDisruptionBudget: config.PodDisruptionBudget{
+								Enabled:      true,
+								MinAvailable: 1,
+							},
+						},
+					},
+				},
+			},
+			checkErr: noErrExpected,
+		},
+		{
+			name: "Valid: PodDisruptionBudget with only maxUnavailable set",
+			vclusterConfig: &VirtualClusterConfig{
+				Config: config.Config{
+					ControlPlane: config.ControlPlane{
+						Advanced: config.ControlPlaneAdvanced{
+							PodDisruptionBudget: config.PodDisruptionBudget{
+								Enabled:        true,
+								MaxUnavailable: "50%",
+							},
+						},
+					},
+				},
+			},
+			checkErr: noErrExpected,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateAdvancedControlPlaneConfig(tc.vclusterConfig.ControlPlane.Advanced)
+			tc.checkErr(t, err)
+		})
+	}
+}
+
+func TestValidateCustomResourceSyncProxyConflicts(t *testing.T) {
+	cases := []struct {
+		name        string
+		toHost      map[string]config.SyncToHostCustomResource
+		fromHost    map[string]config.SyncFromHostCustomResource
+		proxy       map[string]config.CustomResourceProxy
+		expectedErr string
+	}{
+		{
+			name:     "no conflicts - all empty",
+			toHost:   map[string]config.SyncToHostCustomResource{},
+			fromHost: map[string]config.SyncFromHostCustomResource{},
+			proxy:    map[string]config.CustomResourceProxy{},
+		},
+		{
+			name: "no conflicts - different resources and groups",
+			toHost: map[string]config.SyncToHostCustomResource{
+				"resource-a.example.com/v1": {Enabled: true},
+			},
+			fromHost: map[string]config.SyncFromHostCustomResource{
+				"resource-b.other.com/v1": {Enabled: true},
+			},
+			proxy: map[string]config.CustomResourceProxy{
+				"resource-c.another.com/v1": {Enabled: true},
+			},
+		},
+		{
+			name: "conflict between toHost and fromHost - exact key match",
+			toHost: map[string]config.SyncToHostCustomResource{
+				"resource-a.example.com/v1": {Enabled: true},
+			},
+			fromHost: map[string]config.SyncFromHostCustomResource{
+				"resource-a.example.com/v1": {Enabled: true},
+			},
+			proxy:       map[string]config.CustomResourceProxy{},
+			expectedErr: "custom resource resource-a.example.com/v1 exists in sync.toHost.customResources and sync.fromHost.customResources. Syncing is only supported one way",
+		},
+		{
+			name: "conflict between toHost and proxy - same group different resources",
+			toHost: map[string]config.SyncToHostCustomResource{
+				"resource-a.alpha.sh/v1": {Enabled: true},
+			},
+			fromHost: map[string]config.SyncFromHostCustomResource{},
+			proxy: map[string]config.CustomResourceProxy{
+				"resource-b.alpha.sh/v1": {Enabled: true},
+			},
+			expectedErr: `custom resource group "alpha.sh" is used in both sync.toHost.customResources (resource-a.alpha.sh/v1) and proxy.customResources (resource-b.alpha.sh/v1). Resources from the same group cannot be used in both sync and proxy`,
+		},
+		{
+			name:   "conflict between fromHost and proxy - same group different resources",
+			toHost: map[string]config.SyncToHostCustomResource{},
+			fromHost: map[string]config.SyncFromHostCustomResource{
+				"resource-a.alpha.sh/v1": {Enabled: true},
+			},
+			proxy: map[string]config.CustomResourceProxy{
+				"resource-b.alpha.sh/v1": {Enabled: true},
+			},
+			expectedErr: `custom resource group "alpha.sh" is used in both sync.fromHost.customResources (resource-a.alpha.sh/v1) and proxy.customResources (resource-b.alpha.sh/v1). Resources from the same group cannot be used in both sync and proxy`,
+		},
+		{
+			name: "conflict between toHost and proxy - sync without version, proxy with version",
+			toHost: map[string]config.SyncToHostCustomResource{
+				"ciliumnodes.cilium.io": {Enabled: true},
+			},
+			fromHost: map[string]config.SyncFromHostCustomResource{},
+			proxy: map[string]config.CustomResourceProxy{
+				"ciliumidentities.cilium.io/v2": {Enabled: true},
+			},
+			expectedErr: `custom resource group "cilium.io" is used in both sync.toHost.customResources (ciliumnodes.cilium.io) and proxy.customResources (ciliumidentities.cilium.io/v2). Resources from the same group cannot be used in both sync and proxy`,
+		},
+		{
+			name: "multiple resources with one toHost/fromHost conflict",
+			toHost: map[string]config.SyncToHostCustomResource{
+				"resource-a.example.com/v1": {Enabled: true},
+				"resource-b.example.com/v1": {Enabled: true},
+			},
+			fromHost: map[string]config.SyncFromHostCustomResource{
+				"resource-c.other.com/v1":   {Enabled: true},
+				"resource-b.example.com/v1": {Enabled: true},
+			},
+			proxy: map[string]config.CustomResourceProxy{
+				"resource-d.another.com/v1": {Enabled: true},
+			},
+			expectedErr: "custom resource resource-b.example.com/v1 exists in sync.toHost.customResources and sync.fromHost.customResources. Syncing is only supported one way",
+		},
+		{
+			name: "no conflict - same key in toHost and fromHost but fromHost disabled",
+			toHost: map[string]config.SyncToHostCustomResource{
+				"resource-a.example.com/v1": {Enabled: true},
+			},
+			fromHost: map[string]config.SyncFromHostCustomResource{
+				"resource-a.example.com/v1": {Enabled: false},
+			},
+			proxy: map[string]config.CustomResourceProxy{},
+		},
+		{
+			name: "no conflict - same group in toHost and proxy but proxy disabled",
+			toHost: map[string]config.SyncToHostCustomResource{
+				"resource-a.alpha.sh/v1": {Enabled: true},
+			},
+			fromHost: map[string]config.SyncFromHostCustomResource{},
+			proxy: map[string]config.CustomResourceProxy{
+				"resource-b.alpha.sh/v1": {Enabled: false},
+			},
+		},
+		{
+			name:   "no conflict - same group in fromHost and proxy but both disabled",
+			toHost: map[string]config.SyncToHostCustomResource{},
+			fromHost: map[string]config.SyncFromHostCustomResource{
+				"resource-a.alpha.sh/v1": {Enabled: false},
+			},
+			proxy: map[string]config.CustomResourceProxy{
+				"resource-b.alpha.sh/v1": {Enabled: false},
+			},
+		},
+		{
+			name: "no conflict - different groups with similar names",
+			toHost: map[string]config.SyncToHostCustomResource{
+				"ciliumnodes.cilium.io":         {Enabled: true},
+				"ciliumidentities.cilium.io/v2": {Enabled: true},
+			},
+			fromHost: map[string]config.SyncFromHostCustomResource{},
+			proxy: map[string]config.CustomResourceProxy{
+				"foo.alpha.sh/v1": {Enabled: true},
+			},
+		},
+		{
+			name: "conflict - multiple sync resources in same group as proxy",
+			toHost: map[string]config.SyncToHostCustomResource{
+				"ciliumnodes.cilium.io":         {Enabled: true},
+				"ciliumidentities.cilium.io/v2": {Enabled: true},
+				"bar.alpha.sh/v1":               {Enabled: true},
+			},
+			fromHost: map[string]config.SyncFromHostCustomResource{},
+			proxy: map[string]config.CustomResourceProxy{
+				"foo.alpha.sh/v1": {Enabled: true},
+			},
+			expectedErr: `custom resource group "alpha.sh" is used in both sync.toHost.customResources (bar.alpha.sh/v1) and proxy.customResources (foo.alpha.sh/v1). Resources from the same group cannot be used in both sync and proxy`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateCustomResourceSyncProxyConflicts(tc.toHost, tc.fromHost, tc.proxy)
+			if tc.expectedErr == "" {
+				if err != nil {
+					t.Errorf("expected no error, got: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("expected error %q, got nil", tc.expectedErr)
+				} else if err.Error() != tc.expectedErr {
+					t.Errorf("expected error %q, got %q", tc.expectedErr, err.Error())
+				}
+			}
+		})
+	}
+}
+
+func TestValidateExperimentalProxyCustomResourcesConfig(t *testing.T) {
+	cases := []struct {
+		name        string
+		cfg         map[string]config.CustomResourceProxy
+		expectedErr string
+	}{
+		{
+			name: "empty config",
+			cfg:  map[string]config.CustomResourceProxy{},
+		},
+		{
+			name: "valid config with all fields",
+			cfg: map[string]config.CustomResourceProxy{
+				"myresources.example.com/v1": {
+					Enabled: true,
+					TargetVirtualCluster: config.VirtualClusterRef{
+						Name: "target-vcluster",
+					},
+					AccessResources: config.AccessResourcesModeOwned,
+				},
+			},
+		},
+		{
+			name: "valid config with accessResources=all",
+			cfg: map[string]config.CustomResourceProxy{
+				"myresources.example.com/v1": {
+					Enabled: true,
+					TargetVirtualCluster: config.VirtualClusterRef{
+						Name: "target-vcluster",
+					},
+					AccessResources: config.AccessResourcesModeAll,
+				},
+			},
+		},
+		{
+			name: "valid config without accessResources (defaults)",
+			cfg: map[string]config.CustomResourceProxy{
+				"myresources.example.com/v1": {
+					Enabled: true,
+					TargetVirtualCluster: config.VirtualClusterRef{
+						Name: "target-vcluster",
+					},
+				},
+			},
+		},
+		{
+			name: "invalid resource path - missing version",
+			cfg: map[string]config.CustomResourceProxy{
+				"myresources.example.com": {
+					Enabled: true,
+					TargetVirtualCluster: config.VirtualClusterRef{
+						Name: "target-vcluster",
+					},
+				},
+			},
+			expectedErr: "experimental.proxy.customResources['myresources.example.com']: invalid resource path \"myresources.example.com\", expected format 'resource.group/version' (e.g., 'resource.my-org.com/v1')",
+		},
+		{
+			name: "invalid resource path - empty resource",
+			cfg: map[string]config.CustomResourceProxy{
+				"/v1": {
+					Enabled: true,
+					TargetVirtualCluster: config.VirtualClusterRef{
+						Name: "target-vcluster",
+					},
+				},
+			},
+			expectedErr: "experimental.proxy.customResources['/v1']: invalid resource path \"/v1\", expected format 'resource.group/version' (e.g., 'resource.my-org.com/v1')",
+		},
+		{
+			name: "missing targetVirtualCluster.name",
+			cfg: map[string]config.CustomResourceProxy{
+				"myresources.example.com/v1": {
+					Enabled:              true,
+					TargetVirtualCluster: config.VirtualClusterRef{},
+				},
+			},
+			expectedErr: "experimental.proxy.customResources['myresources.example.com/v1'].targetVirtualCluster is required",
+		},
+		{
+			name: "invalid accessResources value",
+			cfg: map[string]config.CustomResourceProxy{
+				"myresources.example.com/v1": {
+					Enabled: true,
+					TargetVirtualCluster: config.VirtualClusterRef{
+						Name: "target-vcluster",
+					},
+					AccessResources: "invalid",
+				},
+			},
+			expectedErr: "experimental.proxy.customResources['myresources.example.com/v1'].accessResources: invalid value \"invalid\", must be 'owned' or 'all'",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateExperimentalProxyCustomResourcesConfig(tc.cfg)
+			if tc.expectedErr == "" {
+				if err != nil {
+					t.Errorf("expected no error, got: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("expected error %q, got nil", tc.expectedErr)
+				} else if err.Error() != tc.expectedErr {
+					t.Errorf("expected error %q, got %q", tc.expectedErr, err.Error())
+				}
+			}
+		})
+	}
+}
+
 func expectErr(errMsg string) func(t *testing.T, err error) {
 	return func(t *testing.T, err error) {
 		t.Helper()
@@ -1704,5 +2088,100 @@ func noErrExpected(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateAutoUpgradeSecurityContext(t *testing.T) {
+	type testCase struct {
+		name           string
+		vclusterConfig *VirtualClusterConfig
+		checkErr       func(t *testing.T, err error)
+	}
+
+	testCases := []testCase{
+		{
+			name: "Valid: no security context configured",
+			vclusterConfig: &VirtualClusterConfig{
+				Config: config.Config{
+					PrivateNodes: config.PrivateNodes{
+						Enabled:     true,
+						AutoUpgrade: config.AutoUpgrade{},
+					},
+				},
+			},
+			checkErr: noErrExpected,
+		},
+		{
+			name: "Valid: correct podSecurityContext",
+			vclusterConfig: &VirtualClusterConfig{
+				Config: config.Config{
+					PrivateNodes: config.PrivateNodes{
+						Enabled: true,
+						AutoUpgrade: config.AutoUpgrade{
+							PodSecurityContext: map[string]interface{}{
+								"runAsUser":  int64(0),
+								"runAsGroup": int64(0),
+							},
+						},
+					},
+				},
+			},
+			checkErr: noErrExpected,
+		},
+		{
+			name: "Valid: correct containerSecurityContext",
+			vclusterConfig: &VirtualClusterConfig{
+				Config: config.Config{
+					PrivateNodes: config.PrivateNodes{
+						Enabled: true,
+						AutoUpgrade: config.AutoUpgrade{
+							ContainerSecurityContext: map[string]interface{}{
+								"runAsUser": int64(0),
+							},
+						},
+					},
+				},
+			},
+			checkErr: noErrExpected,
+		},
+		{
+			name: "Invalid: podSecurityContext with wrong type",
+			vclusterConfig: &VirtualClusterConfig{
+				Config: config.Config{
+					PrivateNodes: config.PrivateNodes{
+						Enabled: true,
+						AutoUpgrade: config.AutoUpgrade{
+							PodSecurityContext: map[string]interface{}{
+								"runAsUser": "not-a-number",
+							},
+						},
+					},
+				},
+			},
+			checkErr: expectErr("invalid privateNodes.autoUpgrade.podSecurityContext: unrecognized type: int64"),
+		},
+		{
+			name: "Invalid: containerSecurityContext with wrong type",
+			vclusterConfig: &VirtualClusterConfig{
+				Config: config.Config{
+					PrivateNodes: config.PrivateNodes{
+						Enabled: true,
+						AutoUpgrade: config.AutoUpgrade{
+							ContainerSecurityContext: map[string]interface{}{
+								"runAsUser": "not-a-number",
+							},
+						},
+					},
+				},
+			},
+			checkErr: expectErr("invalid privateNodes.autoUpgrade.containerSecurityContext: unrecognized type: int64"),
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validatePrivatedNodesMode(tc.vclusterConfig)
+			tc.checkErr(t, err)
+		})
 	}
 }

@@ -2,6 +2,10 @@ package constants
 
 import "path/filepath"
 
+const (
+	VClusterStorageOptionsEnv = "VCLUSTER_STORAGE_OPTIONS"
+)
+
 var (
 	K3sKineEndpoint   = "unix:///data/server/kine.sock"
 	K3sSqliteDatabase = "/data/server/db/state.db"
@@ -40,7 +44,8 @@ var (
 	K8sAPIServerBinary         = filepath.Join(BinariesDir, "kube-apiserver")
 	K8sControllerManagerBinary = filepath.Join(BinariesDir, "kube-controller-manager")
 	K8sSchedulerBinary         = filepath.Join(BinariesDir, "kube-scheduler")
-	KineBinary                 = "/usr/local/bin/kine"
+	KineBinary                 = filepath.Join(BinariesDir, "kine")
+	HelmBinary                 = filepath.Join(BinariesDir, "helm")
 
 	// DefaultVClusterConfigLocation is the default location of the vCluster config within the container
 	DefaultVClusterConfigLocation = "/var/lib/vcluster/config.yaml"
@@ -48,4 +53,9 @@ var (
 	// VClusterNamespaceInHostMappingSpecialCharacter is an empty string that mean vCluster host namespace
 	// in the config.sync.fromHost.*.selector.mappings
 	VClusterNamespaceInHostMappingSpecialCharacter = ""
+
+	SystemPriorityClassesAllowList = []string{
+		"system-node-critical",
+		"system-cluster-critical",
+	}
 )

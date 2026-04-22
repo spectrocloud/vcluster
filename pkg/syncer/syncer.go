@@ -15,6 +15,7 @@ import (
 	syncertypes "github.com/loft-sh/vcluster/pkg/syncer/types"
 	"github.com/loft-sh/vcluster/pkg/util/translate"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -23,7 +24,6 @@ import (
 
 	"github.com/loft-sh/vcluster/pkg/util/loghelper"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -54,8 +54,8 @@ func NewSyncController(ctx *synccontext.RegisterContext, syncer syncertypes.Sync
 		hostNameRequestLookup: map[ctrl.Request]ctrl.Request{},
 
 		log:            loghelper.New(syncer.Name()),
-		vEventRecorder: ctx.VirtualManager.GetEventRecorderFor(syncer.Name() + "-syncer"),
-		physicalClient: ctx.PhysicalManager.GetClient(),
+		vEventRecorder: ctx.VirtualManager.GetEventRecorder(syncer.Name() + "-syncer"),
+		physicalClient: ctx.HostManager.GetClient(),
 
 		currentNamespace:       ctx.CurrentNamespace,
 		currentNamespaceClient: ctx.CurrentNamespaceClient,
@@ -99,7 +99,7 @@ type SyncController struct {
 	hostNameRequestLookup     map[ctrl.Request]ctrl.Request
 
 	log            loghelper.Logger
-	vEventRecorder record.EventRecorder
+	vEventRecorder events.EventRecorder
 
 	physicalClient client.Client
 
@@ -115,7 +115,7 @@ func (r *SyncController) newSyncContext(ctx context.Context, logName string) *sy
 		Context:                ctx,
 		Config:                 r.config,
 		Log:                    loghelper.NewFromExisting(r.log.Base(), logName),
-		PhysicalClient:         r.physicalClient,
+		HostClient:             r.physicalClient,
 		ObjectCache:            r.objectCache,
 		CurrentNamespace:       r.currentNamespace,
 		CurrentNamespaceClient: r.currentNamespaceClient,
@@ -126,12 +126,19 @@ func (r *SyncController) newSyncContext(ctx context.Context, logName string) *sy
 }
 
 func (r *SyncController) Reconcile(ctx context.Context, vReq reconcile.Request) (res ctrl.Result, retErr error) {
+	defer func() {
+		if kerrors.IsConflict(retErr) {
+			res = ctrl.Result{RequeueAfter: time.Second}
+			retErr = nil
+		}
+	}()
+
 	// extract request
 	pReq, ok := r.getHostRequest(vReq)
 	if ok {
 		// put this into the cache again if we requeue
 		defer func() {
-			if res.Requeue || res.RequeueAfter > 0 || retErr != nil {
+			if res.Requeue || res.RequeueAfter > 0 || retErr != nil { //nolint:staticcheck
 				r.setHostRequest(vReq, pReq)
 			}
 		}()
@@ -167,7 +174,7 @@ func (r *SyncController) Reconcile(ctx context.Context, vReq reconcile.Request) 
 		return ctrl.Result{}, err
 	}
 	defer func() {
-		if !res.Requeue && res.RequeueAfter == 0 && retErr == nil {
+		if !res.Requeue && res.RequeueAfter == 0 && retErr == nil { //nolint:staticcheck
 			r.updateObjectCache(vObjOld, vObj, pObjOld, pObj)
 		}
 	}()
@@ -465,7 +472,7 @@ func (r *SyncController) Build(ctx *synccontext.RegisterContext) (controller.Con
 		}).
 		Named(r.syncer.Name()).
 		Watches(r.syncer.Resource(), newEventHandler(r.enqueueVirtual)).
-		WatchesRawSource(source.Kind(ctx.PhysicalManager.GetCache(), r.syncer.Resource(), newEventHandler(r.enqueuePhysical)))
+		WatchesRawSource(source.Kind(ctx.HostManager.GetCache(), r.syncer.Resource(), newEventHandler(r.enqueuePhysical)))
 
 	// should add extra stuff?
 	modifier, isControllerModifier := r.syncer.(syncertypes.ControllerModifier)

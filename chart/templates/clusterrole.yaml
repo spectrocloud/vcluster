@@ -5,7 +5,7 @@ metadata:
   name: {{ template "vcluster.clusterRoleName" . }}
   labels:
     app: vcluster
-    chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
+    chart: "{{ include "vcluster.version.label"  $ }}"
     release: "{{ .Release.Name }}"
     heritage: "{{ .Release.Service }}"
   {{- if .Values.controlPlane.advanced.globalMetadata.annotations }}
@@ -26,13 +26,13 @@ rules:
   {{- end }}
   {{- if or .Values.pro .Values.sync.fromHost.nodes.enabled }}
   - apiGroups: [""]
-    resources: ["pods", "nodes", "nodes/status", "nodes/metrics", "nodes/stats", "nodes/proxy"]
+    resources: ["pods", "nodes", "nodes/status"]
     verbs: ["get", "watch", "list"]
   {{- end }}
-  {{- if .Values.experimental.isolatedControlPlane.enabled }}
+  {{- if and .Values.sync.fromHost.nodes.enabled (or .Values.networking.advanced.proxyKubelets.byIP .Values.networking.advanced.proxyKubelets.byHostname) }}
   - apiGroups: [""]
-    resources: ["nodes"]
-    verbs: ["get", "watch", "list"]
+    resources: ["nodes/metrics", "nodes/stats", "nodes/proxy"]
+    verbs: ["get"]
   {{- end }}
   {{- if and .Values.sync.fromHost.nodes.enabled .Values.sync.fromHost.nodes.syncBackChanges }}
   - apiGroups: [""]
@@ -40,7 +40,7 @@ rules:
     verbs: ["update", "patch"]
   {{- end }}
   {{- if or
-      (and (eq (include "vcluster.distro" .) "k8s") .Values.controlPlane.distro.k8s.scheduler.enabled)
+      .Values.controlPlane.distro.k8s.scheduler.enabled
       .Values.controlPlane.advanced.virtualScheduler.enabled
       .Values.sync.toHost.pods.hybridScheduling.enabled
     }}
@@ -68,10 +68,15 @@ rules:
     resources: ["csistoragecapacities"]
     verbs: ["get", "watch", "list"]
   {{- end }}
+  {{- if or .Values.sync.toHost.persistentVolumes.enabled (include "vcluster.enableVolumeSnapshotRules" .) }}
+  - apiGroups: [ "" ]
+    resources: [ "persistentvolumes" ]
+    verbs: [ "get", "list" ]
+  {{- end }}
   {{- if .Values.sync.toHost.persistentVolumes.enabled }}
   - apiGroups: [""]
     resources: ["persistentvolumes"]
-    verbs: ["create", "delete", "patch", "update", "get", "watch", "list"]
+    verbs: ["create", "delete", "patch", "update", "watch"]
   {{- end }}
   {{- if .Values.sync.fromHost.ingressClasses.enabled }}
   - apiGroups: ["networking.k8s.io"]
@@ -93,15 +98,30 @@ rules:
     resources: ["priorityclasses"]
     verbs: ["create", "delete", "patch", "update", "get", "list", "watch"]
   {{- end }}
+  {{ if or .Values.sync.toHost.resourceClaims.enabled .Values.sync.toHost.resourceClaimTemplates.enabled .Values.sync.fromHost.deviceClasses.enabled}}
+  - apiGroups: ["resource.k8s.io"]
+    resources: ["deviceclasses"]
+    verbs: ["get", "watch", "list"]
+  {{- end }}
+  {{- if or .Values.sync.fromHost.volumeSnapshotClasses.enabled (include "vcluster.enableVolumeSnapshotRules" .) }}
+  - apiGroups: [ "snapshot.storage.k8s.io" ]
+    resources: [ "volumesnapshotclasses" ]
+    verbs: ["get", "list"]
+  {{- end }}
   {{- if .Values.sync.fromHost.volumeSnapshotClasses.enabled }}
   - apiGroups: ["snapshot.storage.k8s.io"]
     resources: ["volumesnapshotclasses"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["watch"]
+  {{- end }}
+  {{- if or .Values.sync.toHost.volumeSnapshotContents.enabled (include "vcluster.enableVolumeSnapshotRules" .) }}
+  - apiGroups: [ "snapshot.storage.k8s.io" ]
+    resources: [ "volumesnapshotcontents" ]
+    verbs: ["create", "delete", "patch", "update", "get", "list"]
   {{- end }}
   {{- if .Values.sync.toHost.volumeSnapshotContents.enabled }}
   - apiGroups: ["snapshot.storage.k8s.io"]
     resources: ["volumesnapshotcontents"]
-    verbs: ["create", "delete", "patch", "update", "get", "list", "watch"]
+    verbs: ["watch"]
   {{- end }}
   {{- if .Values.networking.replicateServices.fromHost }}
   - apiGroups: [""]
@@ -128,7 +148,7 @@ rules:
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list", "watch"]
   {{- end }}
-  {{- if and .Values.integrations.externalSecrets.enabled .Values.integrations.externalSecrets.sync.clusterStores.enabled }}
+  {{- if and .Values.integrations.externalSecrets.enabled .Values.integrations.externalSecrets.sync.fromHost.clusterStores.enabled }}
   - apiGroups: ["external-secrets.io"]
     resources: ["clustersecretstores"]
     verbs: ["get", "list", "watch"]
@@ -142,7 +162,6 @@ rules:
   {{- include "vcluster.rbac.rulesForFromHostSyncerForGivenCoreResource" (list $ .Values.sync.fromHost.secrets.mappings.byName "secrets" .Values.sync.fromHost.secrets.enabled ) | nindent 2 }}
   {{- include "vcluster.customResources.clusterRoleExtraRules" . | indent 2 }}
   {{- include "vcluster.plugin.clusterRoleExtraRules" . | indent 2 }}
-  {{- include "vcluster.generic.clusterRoleExtraRules" . | indent 2 }}
   {{- include "vcluster.rbac.clusterRoleExtraRules" . | indent 2 }}
   {{- end }}
 {{- end }}

@@ -54,6 +54,12 @@ var resourceOrder = []string{
 	"runners",
 	"clusters",
 	"clusteraccesses",
+	"nodeclaims",
+	"nodeenvironments",
+	"nodeproviders",
+	"nodetypes",
+	"osimages",
+	"sshkeys",
 
 	// access
 	"teams",

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -17,10 +16,15 @@ import (
 	"github.com/loft-sh/vcluster/pkg/etcd"
 	"github.com/loft-sh/vcluster/pkg/pro"
 	"github.com/loft-sh/vcluster/pkg/util/command"
+	"github.com/loft-sh/vcluster/pkg/util/osutil"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
+)
+
+const (
+	SQLiteParams = "?_journal=WAL&cache=shared&_busy_timeout=30000&_txlock=immediate"
 )
 
 func StartK8S(ctx context.Context, serviceCIDR string, vConfig *config.VirtualClusterConfig) error {
@@ -82,12 +86,17 @@ func StartK8S(ctx context.Context, serviceCIDR string, vConfig *config.VirtualCl
 					args = append(args, "--kubelet-client-key="+constants.APIServerKubeletClientKey)
 					args = append(args, "--enable-admission-plugins=NodeRestriction")
 					args = append(args, "--endpoint-reconciler-type=none")
+					// this is often needed as the hostname is often not reachable correctly from the api server, but the internal ip
+					// or internal dns is. We could also set this always but having this as a default makes it easier and people can
+					// still override it if needed.
+					args = append(args, "--kubelet-preferred-address-types=InternalDNS,InternalIP,Hostname,ExternalDNS,ExternalIP")
 
 					// if konnectivity is enabled, we need to write the egress config
 					if vConfig.ControlPlane.Advanced.Konnectivity.Server.Enabled {
 						egressConfig, err := pro.WriteKonnectivityEgressConfig()
 						if err != nil {
-							klog.Fatalf("error writing konnectivity egress config: %s", err.Error())
+							klog.Errorf("error writing konnectivity egress config: %s", err.Error())
+							osutil.Exit(1)
 							return
 						}
 
@@ -102,18 +111,20 @@ func StartK8S(ctx context.Context, serviceCIDR string, vConfig *config.VirtualCl
 			// wait until etcd is up and running
 			err := etcd.WaitForEtcd(ctx, etcdCertificates, etcdEndpoints)
 			if err != nil {
-				klog.Fatalf("error waiting for etcd to be up: %s", err.Error())
+				klog.Errorf("error waiting for etcd to be up: %s", err.Error())
+				osutil.Exit(1)
 				return
 			}
 
 			// now start the api server
 			err = command.RunCommand(ctx, args, "apiserver")
 			if err != nil {
-				klog.Fatalf("error running apiserver: %s", err.Error())
+				klog.Errorf("error running apiserver: %s", err.Error())
+				osutil.Exit(1)
 				return
 			}
 			klog.Info("apiserver finished")
-			os.Exit(0)
+			osutil.Exit(0)
 		}()
 	}
 
@@ -146,24 +157,38 @@ func StartK8S(ctx context.Context, serviceCIDR string, vConfig *config.VirtualCl
 				args = append(args, "--root-ca-file="+vConfig.VirtualClusterKubeConfig().ServerCACert)
 				args = append(args, "--service-account-private-key-file="+constants.SAKey)
 				args = append(args, "--use-service-account-credentials=true")
-				if vConfig.ControlPlane.StatefulSet.HighAvailability.Replicas > 1 {
-					args = append(args, "--leader-elect=true")
-				} else {
-					args = append(args, "--leader-elect=false")
-				}
+				args = append(args, "--leader-elect=true")
 
 				if vConfig.PrivateNodes.Enabled {
-					args = append(args, "--controllers=*,bootstrapsigner,tokencleaner")
+					controllers := "--controllers=*,bootstrapsigner,tokencleaner"
+					if vConfig.Sync.ToHost.ResourceClaimTemplates.Enabled {
+						// if resource claim templates are synced, we need to disable resourceclaim controller in the virtual cluster
+						controllers += ",-resourceclaim-controller"
+					}
+					args = append(args, controllers)
 					args = append(args, "--allocate-node-cidrs=true")
 					args = append(args, "--cluster-cidr="+vConfig.Networking.PodCIDR)
+					// we set cloud provider to external as we either want to use an external cloud controller manager
+					// such as AWS or GCP or we fallback to our in-built cloud controller manager.
+					args = append(args, "--cloud-provider=external")
 				} else if vConfig.IsVirtualSchedulerEnabled() {
-					args = append(args, "--controllers=*,-nodeipam,-persistentvolume-binder,-attachdetach,-persistentvolume-expander,-cloud-node-lifecycle,-ttl")
+					controllers := "--controllers=*,-nodeipam,-persistentvolume-binder,-attachdetach,-persistentvolume-expander,-cloud-node-lifecycle,-ttl"
+					if vConfig.Sync.ToHost.ResourceClaimTemplates.Enabled {
+						// if resource claim templates are synced, we need to disable resourceclaim controller in the virtual cluster
+						controllers += ",-resourceclaim-controller"
+					}
+					args = append(args, controllers)
 					args = append(args, "--node-monitor-grace-period=1h")
 					args = append(args, "--node-monitor-period=1h")
 					args = append(args, "--pvclaimbinder-sync-period=60s")
 					args = append(args, "--horizontal-pod-autoscaler-sync-period=60s")
 				} else {
-					args = append(args, "--controllers=*,-nodeipam,-nodelifecycle,-persistentvolume-binder,-attachdetach,-persistentvolume-expander,-cloud-node-lifecycle,-ttl")
+					controllers := "--controllers=*,-nodeipam,-nodelifecycle,-persistentvolume-binder,-attachdetach,-persistentvolume-expander,-cloud-node-lifecycle,-ttl"
+					if vConfig.Sync.ToHost.ResourceClaimTemplates.Enabled {
+						// if resource claim templates are synced, we need to disable resourceclaim controller in the virtual cluster
+						controllers += ",-resourceclaim-controller"
+					}
+					args = append(args, controllers)
 					args = append(args, "--node-monitor-grace-period=180s")
 					args = append(args, "--node-monitor-period=30s")
 					args = append(args, "--pvclaimbinder-sync-period=60s")
@@ -175,11 +200,12 @@ func StartK8S(ctx context.Context, serviceCIDR string, vConfig *config.VirtualCl
 			args = command.MergeArgs(args, controllerManager.ExtraArgs)
 			err = command.RunCommand(ctx, args, "controller-manager")
 			if err != nil {
-				klog.Fatalf("error running controller-manager: %s", err.Error())
+				klog.Errorf("error running controller-manager: %s", err.Error())
+				osutil.Exit(1)
 				return
 			}
 			klog.Info("controller-manager finished")
-			os.Exit(0)
+			osutil.Exit(0)
 		}()
 	}
 
@@ -197,29 +223,20 @@ func StartK8S(ctx context.Context, serviceCIDR string, vConfig *config.VirtualCl
 				args = append(args, "--authorization-kubeconfig="+constants.SchedulerConf)
 				args = append(args, "--bind-address=127.0.0.1")
 				args = append(args, "--kubeconfig="+constants.SchedulerConf)
-				if vConfig.ControlPlane.StatefulSet.HighAvailability.Replicas > 1 {
-					args = append(args, "--leader-elect=true")
-				} else {
-					args = append(args, "--leader-elect=false")
-				}
+				args = append(args, "--leader-elect=true")
 			}
 
 			// add extra args
 			args = command.MergeArgs(args, scheduler.ExtraArgs)
 			err = command.RunCommand(ctx, args, "scheduler")
 			if err != nil {
-				klog.Fatalf("error running scheduler: %s", err.Error())
+				klog.Errorf("error running scheduler: %s", err.Error())
+				osutil.Exit(1)
 				return
 			}
 			klog.Info("scheduler finished")
-			os.Exit(0)
+			osutil.Exit(0)
 		}()
-	}
-
-	// start konnectivity server
-	err = pro.StartKonnectivity(ctx, vConfig)
-	if err != nil {
-		return fmt.Errorf("error starting konnectivity: %w", err)
 	}
 
 	<-ctx.Done()
@@ -227,6 +244,24 @@ func StartK8S(ctx context.Context, serviceCIDR string, vConfig *config.VirtualCl
 }
 
 func StartKine(ctx context.Context, dataSource, listenAddress string, certificates *etcd.Certificates, extraArgs []string) {
+	// start kine
+	doneChan := StartKineWithDone(ctx, dataSource, listenAddress, certificates, extraArgs)
+
+	// wait for kine to finish
+	go func() {
+		err := <-doneChan
+		if err != nil {
+			klog.Errorf("could not run kine: %s", err.Error())
+			osutil.Exit(1)
+		}
+		klog.Info("kine finished")
+		osutil.Exit(0)
+	}()
+}
+
+func StartKineWithDone(ctx context.Context, dataSource, listenAddress string, certificates *etcd.Certificates, extraArgs []string) <-chan error {
+	doneChan := make(chan error)
+
 	// start embedded mode
 	go func() {
 		args := []string{}
@@ -249,12 +284,10 @@ func StartKine(ctx context.Context, dataSource, listenAddress string, certificat
 
 		// now start kine
 		err := command.RunCommand(ctx, args, "kine")
-		if err != nil {
-			klog.Fatal("could not run kine", err)
-		}
-		klog.Info("kine finished")
-		os.Exit(0)
+		doneChan <- err
 	}()
+
+	return doneChan
 }
 
 func StartBackingStore(ctx context.Context, vConfig *config.VirtualClusterConfig) (string, *etcd.Certificates, error) {
@@ -266,7 +299,7 @@ func StartBackingStore(ctx context.Context, vConfig *config.VirtualClusterConfig
 	if vConfig.EmbeddedDatabase() {
 		dataSource := vConfig.ControlPlane.BackingStore.Database.Embedded.DataSource
 		if dataSource == "" {
-			dataSource = fmt.Sprintf("sqlite://%s?_journal=WAL&cache=shared&_busy_timeout=30000&_txlock=immediate", constants.K8sSqliteDatabase)
+			dataSource = fmt.Sprintf("sqlite://%s%s", constants.K8sSqliteDatabase, SQLiteParams)
 		}
 
 		StartKine(ctx, dataSource, constants.K8sKineEndpoint, &etcd.Certificates{

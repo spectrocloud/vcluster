@@ -23,56 +23,29 @@ type VirtualClusterConfig struct {
 	// Holds the vCluster config
 	config.Config `json:",inline"`
 
-	// WorkloadConfig is the config to access the workload cluster
-	WorkloadConfig *rest.Config `json:"-"`
-
-	// WorkloadClient is the client to access the workload cluster
-	WorkloadClient kubernetes.Interface `json:"-"`
-
-	// ControlPlaneConfig is the config to access the control plane cluster
-	ControlPlaneConfig *rest.Config `json:"-"`
-
-	// ControlPlaneClient is the client to access the control plane cluster
-	ControlPlaneClient kubernetes.Interface `json:"-"`
-
 	// Name is the name of the vCluster
 	Name string `json:"name"`
 
-	// WorkloadService is the name of the service of the vCluster
-	WorkloadService string `json:"workloadService,omitempty"`
+	// HostNamespace is the namespace in the host cluster where the vCluster is running
+	HostNamespace string `json:"hostNamespace,omitempty"`
 
-	// WorkloadNamespace is the namespace of the target cluster
-	WorkloadNamespace string `json:"workloadNamespace,omitempty"`
+	// Path is the path to the vCluster config
+	Path string `json:"path,omitempty"`
 
-	// WorkloadTargetNamespace is the namespace of the target cluster where the workloads should get created in
-	WorkloadTargetNamespace string `json:"workloadTargetNamespace,omitempty"`
+	// HostConfig is the config to access the host cluster
+	HostConfig *rest.Config `json:"-"`
 
-	// ControlPlaneService is the name of the service for the vCluster control plane
-	ControlPlaneService string `json:"controlPlaneService,omitempty"`
-
-	// ControlPlaneNamespace is the namespace where the vCluster control plane is running
-	ControlPlaneNamespace string `json:"controlPlaneNamespace,omitempty"`
+	// HostClient is the client to access the host cluster
+	HostClient kubernetes.Interface `json:"-"`
 }
 
 func (v VirtualClusterConfig) VirtualClusterKubeConfig() config.VirtualClusterKubeConfig {
-	distroConfig := config.VirtualClusterKubeConfig{}
-	switch v.Distro() {
-	case config.K3SDistro:
-		distroConfig = config.VirtualClusterKubeConfig{
-			KubeConfig:          "/data/server/cred/admin.kubeconfig",
-			ServerCAKey:         "/data/server/tls/server-ca.key",
-			ServerCACert:        "/data/server/tls/server-ca.crt",
-			ClientCACert:        "/data/server/tls/client-ca.crt",
-			RequestHeaderCACert: "/data/server/tls/request-header-ca.crt",
-		}
-	case config.K8SDistro:
-		distroConfig = config.VirtualClusterKubeConfig{
-			KubeConfig:          constants.AdminKubeConfig,
-			ServerCAKey:         constants.ServerCAKey,
-			ServerCACert:        constants.ServerCACert,
-			ClientCACert:        constants.ClientCACert,
-			RequestHeaderCACert: constants.RequestHeaderCACert,
-		}
+	distroConfig := config.VirtualClusterKubeConfig{
+		KubeConfig:          constants.AdminKubeConfig,
+		ServerCAKey:         constants.ServerCAKey,
+		ServerCACert:        constants.ServerCACert,
+		ClientCACert:        constants.ClientCACert,
+		RequestHeaderCACert: constants.RequestHeaderCACert,
 	}
 
 	retConfig := v.Experimental.VirtualClusterKubeConfig
@@ -118,9 +91,6 @@ func (v VirtualClusterConfig) LegacyOptions() (*legacyconfig.LegacyVirtualCluste
 
 	legacyOptions := &legacyconfig.LegacyVirtualClusterOptions{
 		ProOptions: legacyconfig.LegacyVirtualClusterProOptions{
-			RemoteKubeConfig:  v.Experimental.IsolatedControlPlane.KubeConfig,
-			RemoteNamespace:   v.Experimental.IsolatedControlPlane.Namespace,
-			RemoteServiceName: v.Experimental.IsolatedControlPlane.Service,
 			IntegratedCoredns: v.ControlPlane.CoreDNS.Embedded,
 			EtcdReplicas:      int(v.ControlPlane.StatefulSet.HighAvailability.Replicas),
 			EtcdEmbedded:      v.ControlPlane.BackingStore.Etcd.Embedded.Enabled,
@@ -135,8 +105,7 @@ func (v VirtualClusterConfig) LegacyOptions() (*legacyconfig.LegacyVirtualCluste
 		BindAddress:                 v.ControlPlane.Proxy.BindAddress,
 		Port:                        v.ControlPlane.Proxy.Port,
 		Name:                        v.Name,
-		TargetNamespace:             v.WorkloadNamespace,
-		ServiceName:                 v.WorkloadService,
+		ServiceName:                 v.Name,
 		SetOwner:                    v.Experimental.SyncSettings.SetOwner,
 		SyncAllNodes:                v.Sync.FromHost.Nodes.Selector.All,
 		EnableScheduler:             v.IsVirtualSchedulerEnabled(),
@@ -148,7 +117,7 @@ func (v VirtualClusterConfig) LegacyOptions() (*legacyconfig.LegacyVirtualCluste
 		EnforceNodeSelector:         true,
 		PluginListenAddress:         "localhost:10099",
 		OverrideHosts:               v.Sync.ToHost.Pods.RewriteHosts.Enabled,
-		OverrideHostsContainerImage: v.Sync.ToHost.Pods.RewriteHosts.InitContainer.Image,
+		OverrideHostsContainerImage: v.Sync.ToHost.Pods.RewriteHosts.InitContainer.Image.String(),
 		ServiceAccountTokenSecrets:  v.Sync.ToHost.Pods.UseSecretsForSATokens,
 		ClusterDomain:               v.Networking.Advanced.ClusterDomain,
 		LeaderElect:                 v.ControlPlane.StatefulSet.HighAvailability.Replicas > 1,

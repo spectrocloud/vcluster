@@ -27,8 +27,19 @@ func ParseConfig(path, name string, setValues []string) (*VirtualClusterConfig, 
 		return nil, err
 	}
 
+	cfg, err := ParseConfigBytes(rawFile, name, setValues)
+	if err != nil {
+		return nil, fmt.Errorf("parsing config bytes: %w", err)
+	}
+
+	cfg.Path = path
+
+	return cfg, nil
+}
+
+func ParseConfigBytes(data []byte, name string, setValues []string) (*VirtualClusterConfig, error) {
 	// apply set values
-	rawFile, err = applySetValues(rawFile, setValues)
+	rawFile, err := applySetValues(data, setValues)
 	if err != nil {
 		return nil, fmt.Errorf("apply set values: %w", err)
 	}
@@ -43,9 +54,8 @@ func ParseConfig(path, name string, setValues []string) (*VirtualClusterConfig, 
 
 	// build config
 	retConfig := &VirtualClusterConfig{
-		Config:              *rawConfig,
-		Name:                name,
-		ControlPlaneService: name,
+		Config: *rawConfig,
+		Name:   name,
 	}
 
 	// validate config
