@@ -2,45 +2,50 @@
 
 * @loft-sh/eng-dev-vcluster-platform
 
-/.github/workflows/backport.yaml @Piotr1215
-/.github/workflows/e2e.yaml @FabianKramm
-/.github/workflows/e2e.yaml @loft-sh/eng-qa
-/.github/workflows/release.yaml @FabianKramm
+/.github/workflows/e2e*.yaml @loft-sh/eng-qa @loft-sh/eng-tech-leads
+/.github/workflows/release.yaml @loft-sh/eng-tech-leads
+/.github/CODEOWNERS @loft-sh/eng-tech-leads
 
-/chart/ @FabianKramm @hidalgopl
+/chart/templates/ @loft-sh/eng-tech-leads
 
-/cmd/vcluster/ @FabianKramm @hidalgopl
+/cmd/vcluster/ @loft-sh/eng-tech-leads
 
-/config/ @FabianKramm @hidalgopl
+/config/ @loft-sh/eng-tech-leads
 
 /docs/ @loft-sh/Eng-Docs-Admin
 
-/pkg/authentication/ @FabianKramm
-/pkg/authorization/ @FabianKramm
+/test/ @loft-sh/eng-qa @loft-sh/eng-dev-vcluster-platform
+/e2e-next/ @loft-sh/eng-qa
 
-/pkg/cli/ @hidalgopl
+/hack/email/ @zerbitx
 
-/pkg/config/ @hidalgopl
-/pkg/config/config.go @FabianKramm
+/pkg/authentication/ @loft-sh/eng-tech-leads
+/pkg/authorization/ @loft-sh/eng-tech-leads
 
-/pkg/controllers/k8sdefaultendpoint/ @FabianKramm
-/pkg/controllers/register.go @FabianKramm
-/pkg/controllers/resources/*/from_host_syncer*.go @hidalgopl
-/pkg/controllers/resources/configmaps/ @FabianKramm
-/pkg/controllers/resources/endpoints/ @FabianKramm
-/pkg/controllers/resources/events/ @FabianKramm
-/pkg/controllers/resources/pods/ @FabianKramm
-/pkg/controllers/resources/secrets/ @FabianKramm
-/pkg/controllers/resources/services/ @FabianKramm
+/pkg/config/config.go @loft-sh/eng-tech-leads
 
-/pkg/k8s/ @FabianKramm
-/pkg/mappings/ @FabianKramm
-/pkg/plugin/ @FabianKramm
-/pkg/server/ @FabianKramm
-/pkg/setup/ @FabianKramm @hidalgopl
-/pkg/syncer/ @FabianKramm @hidalgopl
-/pkg/util/translate/ @FabianKramm
+/pkg/controllers/k8sdefaultendpoint/ @loft-sh/eng-tech-leads
+/pkg/controllers/register.go @loft-sh/eng-tech-leads
+/pkg/controllers/resources/configmaps/ @loft-sh/eng-tech-leads
+/pkg/controllers/resources/endpoints/ @loft-sh/eng-tech-leads
+/pkg/controllers/resources/events/ @loft-sh/eng-tech-leads
+/pkg/controllers/resources/pods/ @loft-sh/eng-tech-leads
+/pkg/controllers/resources/secrets/ @loft-sh/eng-tech-leads
+/pkg/controllers/resources/services/ @loft-sh/eng-tech-leads
 
-/test/ @loft-sh/eng-qa
+/pkg/k8s/ @loft-sh/eng-tech-leads
+/pkg/mappings/ @loft-sh/eng-tech-leads
+/pkg/platform/ @loft-sh/eng-tech-leads
+/pkg/plugin/ @loft-sh/eng-tech-leads
+/pkg/server/ @loft-sh/eng-tech-leads
+/pkg/setup/ @loft-sh/eng-tech-leads
+/pkg/syncer/ @loft-sh/eng-tech-leads
+/pkg/util/portforward/ @loft-sh/eng-tech-leads @lizardruss
+/pkg/util/servicecidr/ @loft-sh/eng-tech-leads @lizardruss
+/pkg/util/translate/ @loft-sh/eng-tech-leads
+
+Dockerfile @loft-sh/eng-tech-leads
+Dockerfile.release @loft-sh/eng-tech-leads
+go.mod @loft-sh/eng-tech-leads
 
 netlify.toml @loft-sh/Eng-Docs-Admin

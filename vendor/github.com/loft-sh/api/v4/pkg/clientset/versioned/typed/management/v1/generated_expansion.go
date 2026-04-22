@@ -22,14 +22,6 @@ type ConvertVirtualClusterConfigExpansion interface{}
 
 type DatabaseConnectorExpansion interface{}
 
-type DevPodEnvironmentTemplateExpansion interface{}
-
-type DevPodWorkspaceInstanceExpansion interface{}
-
-type DevPodWorkspacePresetExpansion interface{}
-
-type DevPodWorkspaceTemplateExpansion interface{}
-
 type DirectClusterEndpointTokenExpansion interface{}
 
 type EventExpansion interface{}
@@ -40,11 +32,19 @@ type IngressAuthTokenExpansion interface{}
 
 type LicenseExpansion interface{}
 
-type LicenseTokenExpansion interface{}
-
 type LoftUpgradeExpansion interface{}
 
+type NodeClaimExpansion interface{}
+
+type NodeEnvironmentExpansion interface{}
+
+type NodeProviderExpansion interface{}
+
+type NodeTypeExpansion interface{}
+
 type OIDCClientExpansion interface{}
+
+type OSImageExpansion interface{}
 
 type OwnedAccessKeyExpansion interface{}
 
@@ -58,7 +58,7 @@ type RegisterVirtualClusterExpansion interface{}
 
 type ResetAccessKeyExpansion interface{}
 
-type RunnerExpansion interface{}
+type SSHKeyExpansion interface{}
 
 type SelfExpansion interface{}
 
@@ -77,6 +77,8 @@ type TaskExpansion interface{}
 type TeamExpansion interface{}
 
 type TranslateVClusterResourceNameExpansion interface{}
+
+type UsageDownloadExpansion interface{}
 
 type UserExpansion interface{}
 

@@ -11,8 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/loft-sh/vcluster/pkg/constants"
-
 	clusterv1 "github.com/loft-sh/agentapi/v4/pkg/apis/loft/cluster/v1"
 	managementv1 "github.com/loft-sh/api/v4/pkg/apis/management/v1"
 	storagev1 "github.com/loft-sh/api/v4/pkg/apis/storage/v1"
@@ -20,6 +18,8 @@ import (
 	"github.com/loft-sh/api/v4/pkg/product"
 	"github.com/loft-sh/log"
 	"github.com/loft-sh/log/survey"
+	"github.com/loft-sh/vcluster/pkg/cli/config"
+	"github.com/loft-sh/vcluster/pkg/constants"
 	"github.com/loft-sh/vcluster/pkg/platform/clihelper"
 	"github.com/loft-sh/vcluster/pkg/platform/kube"
 	"github.com/loft-sh/vcluster/pkg/platform/kubeconfig"
@@ -31,6 +31,7 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/kubectl/pkg/util/term"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -596,43 +597,45 @@ func WaitForSpaceInstance(ctx context.Context, managementClient kube.Interface, 
 }
 
 func CreateVirtualClusterInstanceOptions(ctx context.Context, client Client, config string, projectName string, virtualClusterInstance *managementv1.VirtualClusterInstance, setActive bool) (kubeconfig.ContextOptions, error) {
-	var cluster *managementv1.Cluster
-
-	var err error
-	cluster, err = findProjectCluster(ctx, client, projectName, virtualClusterInstance.Spec.ClusterRef.Cluster)
-	if err != nil {
-		return kubeconfig.ContextOptions{}, fmt.Errorf("find space instance cluster: %w", err)
-	}
-
 	host := client.Config().Platform.Host
+	insecure := client.Config().Platform.Insecure
+	var caData []byte
 
-	directHost, directInsecure := getDirectEndpointAndInsecureFromClusterAnnotations(cluster)
-
-	if directHost != "" {
-		host = directHost
-	}
-
-	contextOptions := kubeconfig.ContextOptions{
-		Name:       kubeconfig.VirtualClusterInstanceContextName(projectName, virtualClusterInstance.Name),
-		ConfigPath: config,
-		SetActive:  setActive,
-	}
-	contextOptions.Server = host + "/kubernetes/project/" + projectName + "/virtualcluster/" + virtualClusterInstance.Name
-	contextOptions.InsecureSkipTLSVerify = client.Config().Platform.Insecure
-
-	if directInsecure != "" {
-		insecure, _ := strconv.ParseBool(directInsecure)
-		contextOptions.InsecureSkipTLSVerify = insecure
-	}
-	if !virtualClusterInstance.Spec.NetworkPeer {
-		data, err := RetrieveCaData(cluster)
+	// if cluster ref is set, try to use the direct host and insecure from the cluster
+	if virtualClusterInstance.Spec.ClusterRef.Cluster != "" {
+		cluster, err := findProjectCluster(ctx, client, projectName, virtualClusterInstance.Spec.ClusterRef.Cluster)
 		if err != nil {
-			return kubeconfig.ContextOptions{}, err
+			return kubeconfig.ContextOptions{}, fmt.Errorf("find virtual cluster instance cluster: %w", err)
 		}
-		contextOptions.CaData = data
+		directHost, directInsecure := getDirectEndpointAndInsecureFromClusterAnnotations(cluster)
+
+		// exchange host if direct host is set
+		if directHost != "" {
+			host = directHost
+		}
+
+		// exchange insecure if direct insecure is set
+		if directInsecure != "" && !insecure {
+			insecure, _ = strconv.ParseBool(directInsecure)
+		}
+
+		// retrieve ca data if not insecure
+		if !insecure {
+			caData, err = RetrieveCaData(cluster)
+			if err != nil {
+				return kubeconfig.ContextOptions{}, err
+			}
+		}
 	}
 
-	return contextOptions, nil
+	return kubeconfig.ContextOptions{
+		Name:                  kubeconfig.VirtualClusterInstanceContextName(projectName, virtualClusterInstance.Name),
+		ConfigPath:            config,
+		SetActive:             setActive,
+		Server:                host + "/kubernetes/project/" + projectName + "/virtualcluster/" + virtualClusterInstance.Name,
+		InsecureSkipTLSVerify: insecure,
+		CaData:                caData,
+	}, nil
 }
 
 func CreateSpaceInstanceOptions(ctx context.Context, client Client, config string, projectName string, spaceInstance *managementv1.SpaceInstance, setActive, disableDirectEndpoint bool) (kubeconfig.ContextOptions, error) {
@@ -1375,4 +1378,102 @@ func isUserTeamOwner(teams []*storagev1.EntityInfo, vclusterOwnerTeam string) bo
 		}
 	}
 	return false
+}
+
+// EnablePlatformManagement is transitioning an externally deployed virtual cluster to a platform managed instance as follows:
+//  1. Wait for the virtual cluster namespace to receive virtual cluster instance namespaced name via labels.
+//     It assumes platform integration is active in the local cluster.
+//  2. Wait for the virtual cluster instance to become ready.
+//  3. Patch the virtual cluster instance spec.external to false.
+//  4. Wait for the virtual cluster instance to become ready.
+func EnablePlatformManagement(ctx context.Context, kubeClient *kubernetes.Clientset, config *config.CLI, name string, namespace string, log log.Logger) error {
+	nameLabel := "loft.sh/vcluster-instance-name"
+	namespaceLabel := "loft.sh/vcluster-instance-namespace"
+
+	// platform client init
+	platformClient, err := InitClientFromConfig(ctx, config)
+	if err != nil {
+		return fmt.Errorf("failed to init platform client: %w", err)
+	}
+
+	// management client init
+	managementClient, err := platformClient.Management()
+	if err != nil {
+		return fmt.Errorf("failed to init management client: %w", err)
+	}
+
+	// wait for the virtual cluster namespace to be synced
+	log.Infof("Waiting for the platform agent to onboard the %s/%s vCluster ", namespace, name)
+	err = wait.PollUntilContextTimeout(ctx, time.Second, clihelper.Timeout(), true, func(ctx context.Context) (done bool, err error) {
+		ns, err := kubeClient.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+		if err != nil {
+			return false, fmt.Errorf("failed to get namespace %s: %w", namespace, err)
+		}
+
+		return ns.Labels[nameLabel] != "" && ns.Labels[namespaceLabel] != "", nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed while waiting for the platform agent onboarding process: %w", err)
+	}
+
+	// get virtual cluster instance details from the virtual cluster namespace annotations set by the platform agent
+	ns, err := kubeClient.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get namespace %s: %w", namespace, err)
+	}
+
+	vciName := ns.Labels[nameLabel]
+	vciNamespace := ns.Labels[namespaceLabel]
+
+	log.Infof("Waiting until the virtual cluster instance %s/%s is ready", vciNamespace, vciName)
+	_, err = WaitForVirtualClusterInstance(ctx, managementClient, vciNamespace, vciName, true, log)
+	if err != nil {
+		return fmt.Errorf("failed while waiting for the virtual cluster instance %s/%s to be ready: %w", vciNamespace, vciName, err)
+	}
+
+	// get virtual cluster instance
+	virtualClusterInstance, err := managementClient.Loft().ManagementV1().VirtualClusterInstances(vciNamespace).Get(ctx, vciName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get virtual cluster instance %s/%s: %w", vciNamespace, vciName, err)
+	}
+
+	// test if platform management is already enabled
+	if !virtualClusterInstance.Spec.External {
+		log.Infof("Platform management is already enabled for the %s/%s virtual cluster instance", vciNamespace, vciName)
+		return nil
+	}
+
+	if virtualClusterInstance.Spec.ClusterRef.Cluster == "" {
+		return fmt.Errorf("virtual cluster instance %s/%s cluster ref is not set", vciNamespace, vciName)
+	}
+
+	if virtualClusterInstance.Spec.ClusterRef.Namespace != namespace {
+		return fmt.Errorf("virtual cluster instance %s/%s namespace has unexpected value %s", vciNamespace, vciName, namespace)
+	}
+
+	if virtualClusterInstance.Spec.ClusterRef.VirtualCluster != name {
+		return fmt.Errorf("virtual cluster instance %s/%s name has unexpected value %s", vciNamespace, vciName, name)
+	}
+
+	// patching virtual cluster instance to set spec.external=false
+	log.Infof("Enabled platform management for vCluster %s/%s", vciNamespace, vciName)
+	patch := crclient.MergeFrom(virtualClusterInstance.DeepCopy())
+	virtualClusterInstance.Spec.External = false
+	patchData, err := patch.Data(virtualClusterInstance)
+	if err != nil {
+		return fmt.Errorf("calculate update patch: %w", err)
+	}
+	_, err = managementClient.Loft().ManagementV1().VirtualClusterInstances(vciNamespace).Patch(ctx, vciName, patch.Type(), patchData, metav1.PatchOptions{})
+	if err != nil {
+		return fmt.Errorf("patch virtual cluster: %w", err)
+	}
+
+	log.Infof("Waiting until the virtual cluster instance %s/%s is ready", vciNamespace, vciName)
+	_, err = WaitForVirtualClusterInstance(ctx, managementClient, vciNamespace, vciName, true, log)
+	if err != nil {
+		return fmt.Errorf("failed while waiting for the virtual cluster instance %s/%s to be ready: %w", vciNamespace, vciName, err)
+	}
+
+	log.Infof("Successfully enabled platform management for vCluster %s/%s", namespace, name)
+	return nil
 }

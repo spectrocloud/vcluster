@@ -1,6 +1,7 @@
 package translate
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"path"
@@ -16,6 +17,7 @@ import (
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
 	"github.com/loft-sh/vcluster/pkg/util/loghelper"
 	"github.com/loft-sh/vcluster/pkg/util/random"
+	"github.com/loft-sh/vcluster/pkg/util/toleration"
 	"github.com/loft-sh/vcluster/pkg/util/translate"
 	"github.com/pkg/errors"
 	appsv1 "k8s.io/api/apps/v1"
@@ -23,9 +25,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilversion "k8s.io/apimachinery/pkg/util/version"
+	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/component-helpers/storage/ephemeral"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -42,8 +46,6 @@ const (
 	ClusterAutoScalerDaemonSetAnnotation = "cluster-autoscaler.kubernetes.io/daemonset-pod"
 	ServiceAccountNameAnnotation         = "vcluster.loft.sh/service-account-name"
 	ServiceAccountTokenAnnotation        = "vcluster.loft.sh/token-"
-	HostIPAnnotation                     = "vcluster.loft.sh/host-ip"
-	HostIPsAnnotation                    = "vcluster.loft.sh/host-ips"
 )
 
 var (
@@ -59,7 +61,7 @@ type Translator interface {
 	TranslateContainerEnv(ctx *synccontext.SyncContext, envVar []corev1.EnvVar, envFrom []corev1.EnvFromSource, vPod *corev1.Pod, serviceEnvMap map[string]string) ([]corev1.EnvVar, []corev1.EnvFromSource, error)
 }
 
-func NewTranslator(ctx *synccontext.RegisterContext, eventRecorder record.EventRecorder) (Translator, error) {
+func NewTranslator(ctx *synccontext.RegisterContext, eventRecorder events.EventRecorder) (Translator, error) {
 	imageTranslator, err := NewImageTranslator(ctx.Config.Sync.ToHost.Pods.TranslateImage)
 	if err != nil {
 		return nil, err
@@ -92,36 +94,52 @@ func NewTranslator(ctx *synccontext.RegisterContext, eventRecorder record.EventR
 		return nil, fmt.Errorf("failed to create scheduling config: %w", err)
 	}
 
+	overrideHostsImage := ctx.Config.Sync.ToHost.Pods.RewriteHosts.InitContainer.Image
+	overrideHostsImage.Registry = cmp.Or(
+		ctx.Config.ControlPlane.Advanced.DefaultImageRegistry,
+		overrideHostsImage.Registry,
+		"docker.io",
+	)
+
+	hostClusterVersion, err := ctx.Config.HostClient.Discovery().ServerVersion()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get virtual cluster version : %w", err)
+	}
+
 	return &translator{
 		vClientConfig: ctx.VirtualManager.GetConfig(),
 		vClient:       ctx.VirtualManager.GetClient(),
 
-		pClient:         ctx.PhysicalManager.GetClient(),
+		pClient:         ctx.HostManager.GetClient(),
 		imageTranslator: imageTranslator,
 		eventRecorder:   eventRecorder,
 		log:             loghelper.New("pods-syncer-translator"),
-
-		defaultImageRegistry: ctx.Config.ControlPlane.Advanced.DefaultImageRegistry,
 
 		serviceAccountSecretsEnabled: ctx.Config.Sync.ToHost.Pods.UseSecretsForSATokens,
 		clusterDomain:                ctx.Config.Networking.Advanced.ClusterDomain,
 		serviceAccount:               ctx.Config.ControlPlane.Advanced.WorkloadServiceAccount.Name,
 
 		overrideHosts:          ctx.Config.Sync.ToHost.Pods.RewriteHosts.Enabled,
-		overrideHostsImage:     ctx.Config.Sync.ToHost.Pods.RewriteHosts.InitContainer.Image,
+		overrideHostsImage:     overrideHostsImage.String(),
 		overrideHostsResources: resourceRequirements,
 
 		serviceAccountsEnabled:         ctx.Config.Sync.ToHost.ServiceAccounts.Enabled,
 		hostPriorityClassesSyncEnabled: ctx.Config.Sync.FromHost.PriorityClasses.Enabled,
 		priorityClassesSyncEnabled:     ctx.Config.Sync.ToHost.PriorityClasses.Enabled,
 		schedulingConfig:               schedulingConfig,
-		fakeKubeletIPs:                 ctx.Config.Networking.Advanced.ProxyKubelets.ByIP,
 
 		mountPhysicalHostPaths: ctx.Config.ControlPlane.HostPathMapper.Enabled && !ctx.Config.ControlPlane.HostPathMapper.Central,
 
 		virtualLogsPath:       virtualLogsPath,
 		virtualPodLogsPath:    filepath.Join(virtualLogsPath, "pods"),
 		virtualKubeletPodPath: filepath.Join(virtualKubeletPath, "pods"),
+
+		hostClusterVersion: hostClusterVersion,
+
+		resourceClaimEnabled:         ctx.Config.Sync.ToHost.ResourceClaims.Enabled,
+		resourceClaimTemplateEnabled: ctx.Config.Sync.ToHost.ResourceClaimTemplates.Enabled,
+
+		enforcedTolerations: parseEnforcedTolerations(ctx.Config.Sync.ToHost.Pods.EnforceTolerations),
 	}, nil
 }
 
@@ -130,10 +148,8 @@ type translator struct {
 	vClient         client.Client
 	pClient         client.Client
 	imageTranslator ImageTranslator
-	eventRecorder   record.EventRecorder
+	eventRecorder   events.EventRecorder
 	log             loghelper.Logger
-
-	defaultImageRegistry string
 
 	// this is needed for host path mapper (legacy)
 	mountPhysicalHostPaths bool
@@ -148,11 +164,19 @@ type translator struct {
 	hostPriorityClassesSyncEnabled bool
 	priorityClassesSyncEnabled     bool
 	schedulingConfig               scheduling.Config
-	fakeKubeletIPs                 bool
 
 	virtualLogsPath       string
 	virtualPodLogsPath    string
 	virtualKubeletPodPath string
+
+	hostClusterVersion *version.Info
+
+	resourceClaimEnabled         bool
+	resourceClaimTemplateEnabled bool
+
+	// enforcedTolerations are tolerations from vcluster config that must always be present
+	// on the physical pod, both at creation time and when the virtual pod's tolerations change.
+	enforcedTolerations []corev1.Toleration
 }
 
 func (t *translator) Translate(ctx *synccontext.SyncContext, vPod *corev1.Pod, services []*corev1.Service, dnsIP string, kubeIP string) (*corev1.Pod, error) {
@@ -275,9 +299,14 @@ func (t *translator) Translate(ctx *synccontext.SyncContext, vPod *corev1.Pod, s
 	serviceEnv := ServicesToEnvironmentVariables(vPod.Spec.EnableServiceLinks, services, kubeIP)
 
 	// add the required kubernetes hosts entry
+	kubernetesSvcAliases := []string{"kubernetes", "kubernetes.default", "kubernetes.default.svc"}
+	if t.clusterDomain != "" {
+		// canonical name first to mimic lookup with search domains
+		kubernetesSvcAliases = append([]string{"kubernetes.default.svc." + t.clusterDomain}, kubernetesSvcAliases...)
+	}
 	pPod.Spec.HostAliases = append(pPod.Spec.HostAliases, corev1.HostAlias{
 		IP:        kubeIP,
-		Hostnames: []string{"kubernetes", "kubernetes.default", "kubernetes.default.svc"},
+		Hostnames: kubernetesSvcAliases,
 	})
 
 	// translate the dns config
@@ -307,6 +336,18 @@ func (t *translator) Translate(ctx *synccontext.SyncContext, vPod *corev1.Pod, s
 		}
 
 		pPod.Spec.Subdomain = ""
+	}
+
+	// translate pod resources
+	if t.hostClusterVersion != nil {
+		parsedVersion, err := utilversion.ParseSemantic(t.hostClusterVersion.String())
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse host cluster version : %w", err)
+		}
+		// spec.resources is only supported in beta from Kubernetes 1.34.0
+		if parsedVersion.LessThan(utilversion.MustParseSemantic("1.34.0")) {
+			pPod.Spec.Resources = nil
+		}
 	}
 
 	// translate containers
@@ -353,6 +394,8 @@ func (t *translator) Translate(ctx *synccontext.SyncContext, vPod *corev1.Pod, s
 		return nil, err
 	}
 
+	t.translateResourceClaims(ctx, pPod, vPod)
+
 	// add runtime class name
 	if ctx.Config.Sync.ToHost.Pods.RuntimeClassName != "" {
 		pPod.Spec.RuntimeClassName = &ctx.Config.Sync.ToHost.Pods.RuntimeClassName
@@ -378,6 +421,13 @@ func (t *translator) Translate(ctx *synccontext.SyncContext, vPod *corev1.Pod, s
 				pPod.Spec.NodeSelector = map[string]string{}
 			}
 			pPod.Spec.NodeSelector[k] = v
+		}
+	}
+
+	// apply enforced tolerations from vcluster config, skipping any already present
+	for _, toleration := range t.enforcedTolerations {
+		if !hasToleration(pPod.Spec.Tolerations, toleration) {
+			pPod.Spec.Tolerations = append(pPod.Spec.Tolerations, toleration)
 		}
 	}
 
@@ -438,7 +488,7 @@ func (t *translator) translateVolumes(ctx *synccontext.SyncContext, pPod *corev1
 		}
 		if pPod.Spec.Volumes[i].DownwardAPI != nil {
 			for j := range pPod.Spec.Volumes[i].DownwardAPI.Items {
-				translateFieldRef(pPod.Spec.Volumes[i].DownwardAPI.Items[j].FieldRef, t.fakeKubeletIPs, t.schedulingConfig.IsSchedulerFromVirtualCluster(pPod.Spec.SchedulerName))
+				translateFieldRef(pPod.Spec.Volumes[i].DownwardAPI.Items[j].FieldRef)
 			}
 		}
 		if pPod.Spec.Volumes[i].ISCSI != nil && pPod.Spec.Volumes[i].ISCSI.SecretRef != nil {
@@ -482,9 +532,7 @@ func (t *translator) translateVolumes(ctx *synccontext.SyncContext, pPod *corev1
 	}
 
 	// rewrite host paths if enabled
-	t.rewriteHostPaths(pPod)
-
-	return nil
+	return t.rewriteHostPaths(ctx, pPod)
 }
 
 func (t *translator) translateProjectedVolume(
@@ -504,7 +552,7 @@ func (t *translator) translateProjectedVolume(
 		}
 		if projectedVolume.Sources[i].DownwardAPI != nil {
 			for j := range projectedVolume.Sources[i].DownwardAPI.Items {
-				translateFieldRef(projectedVolume.Sources[i].DownwardAPI.Items[j].FieldRef, t.fakeKubeletIPs, t.schedulingConfig.IsSchedulerFromVirtualCluster(pPod.Spec.SchedulerName))
+				translateFieldRef(projectedVolume.Sources[i].DownwardAPI.Items[j].FieldRef)
 			}
 		}
 		if projectedVolume.Sources[i].ServiceAccountToken != nil {
@@ -603,7 +651,7 @@ func (t *translator) translateProjectedVolume(
 	return nil
 }
 
-func translateFieldRef(fieldSelector *corev1.ObjectFieldSelector, fakeKubeletIPs, enableScheduler bool) {
+func translateFieldRef(fieldSelector *corev1.ObjectFieldSelector) {
 	if fieldSelector == nil {
 		return
 	}
@@ -626,22 +674,13 @@ func translateFieldRef(fieldSelector *corev1.ObjectFieldSelector, fakeKubeletIPs
 		fieldSelector.FieldPath = "metadata.annotations['" + UIDAnnotation + "']"
 	case "spec.serviceAccountName":
 		fieldSelector.FieldPath = "metadata.annotations['" + ServiceAccountNameAnnotation + "']"
-	// translate downward API references for status.hostIP(s) only when both virtual scheduler & fakeKubeletIPs are enabled
-	case "status.hostIP":
-		if fakeKubeletIPs && enableScheduler {
-			fieldSelector.FieldPath = "metadata.annotations['" + HostIPAnnotation + "']"
-		}
-	case "status.hostIPs":
-		if fakeKubeletIPs && enableScheduler {
-			fieldSelector.FieldPath = "metadata.annotations['" + HostIPsAnnotation + "']"
-		}
 	}
 }
 
 func (t *translator) TranslateContainerEnv(ctx *synccontext.SyncContext, envVar []corev1.EnvVar, envFrom []corev1.EnvFromSource, vPod *corev1.Pod, serviceEnvMap map[string]string) ([]corev1.EnvVar, []corev1.EnvFromSource, error) {
 	envNameMap := make(map[string]struct{})
 	for j, env := range envVar {
-		translateDownwardAPI(&envVar[j], t.fakeKubeletIPs, t.schedulingConfig.IsSchedulerFromVirtualCluster(vPod.Spec.SchedulerName))
+		translateDownwardAPI(&envVar[j])
 		if env.ValueFrom != nil && env.ValueFrom.ConfigMapKeyRef != nil && env.ValueFrom.ConfigMapKeyRef.Name != "" {
 			envVar[j].ValueFrom.ConfigMapKeyRef.Name = mappings.VirtualToHostName(ctx, envVar[j].ValueFrom.ConfigMapKeyRef.Name, vPod.Namespace, mappings.ConfigMaps())
 		}
@@ -682,14 +721,14 @@ func (t *translator) TranslateContainerEnv(ctx *synccontext.SyncContext, envVar 
 	return envVar, envFrom, nil
 }
 
-func translateDownwardAPI(env *corev1.EnvVar, fakeKubeletIPs, enableScheduler bool) {
+func translateDownwardAPI(env *corev1.EnvVar) {
 	if env.ValueFrom == nil {
 		return
 	}
 	if env.ValueFrom.FieldRef == nil {
 		return
 	}
-	translateFieldRef(env.ValueFrom.FieldRef, fakeKubeletIPs, enableScheduler)
+	translateFieldRef(env.ValueFrom.FieldRef)
 }
 
 func (t *translator) translateDNSConfig(pPod *corev1.Pod, vPod *corev1.Pod, nameServer string) {
@@ -808,7 +847,13 @@ func (t *translator) translatePodAffinityTerm(vPod *corev1.Pod, term corev1.PodA
 				// selector with the value that is unique for the particular affinity term
 
 				// Create and event and log entry until the above is implemented
-				t.eventRecorder.Eventf(vPod, "Warning", "SyncWarning", "Inter-pod affinity rule(s) that use both .namespaces and .namespaceSelector fields in the same term are not supported by vcluster yet. The .namespaceSelector fields of the unsupported affinity entries will be ignored.")
+				t.eventRecorder.Eventf(
+					vPod,
+					nil,
+					"Warning",
+					"SyncWarning",
+					"PodSyncWarning",
+					"Inter-pod affinity rule(s) that use both .namespaces and .namespaceSelector fields in the same term are not supported by vcluster yet. The .namespaceSelector fields of the unsupported affinity entries will be ignored.")
 				t.log.Infof("Inter-pod affinity rule(s) that use both .namespaces and .namespaceSelector fields in the same term are not supported by vcluster yet. The .namespaceSelector fields of the unsupported affinity entries of the %s pod in %s namespace will be ignored.", vPod.GetName(), vPod.GetNamespace())
 			}
 
@@ -843,6 +888,28 @@ func (t *translator) translatePodAffinityTerm(vPod *corev1.Pod, term corev1.PodA
 		newAffinityTerm.LabelSelector.MatchLabels[translate.MarkerLabel] = translate.VClusterName
 	}
 	return newAffinityTerm
+}
+
+func (t *translator) translateResourceClaims(ctx *synccontext.SyncContext, pPod *corev1.Pod, vPod *corev1.Pod) {
+	for i := range pPod.Spec.ResourceClaims {
+		if t.resourceClaimEnabled && pPod.Spec.ResourceClaims[i].ResourceClaimName != nil {
+			translatedName := mappings.VirtualToHostName(
+				ctx,
+				*pPod.Spec.ResourceClaims[i].ResourceClaimName,
+				vPod.Namespace,
+				mappings.ResourceClaims())
+			pPod.Spec.ResourceClaims[i].ResourceClaimName = ptr.To(translatedName)
+		}
+
+		if t.resourceClaimTemplateEnabled && pPod.Spec.ResourceClaims[i].ResourceClaimTemplateName != nil {
+			translatedName := mappings.VirtualToHostName(
+				ctx,
+				*pPod.Spec.ResourceClaims[i].ResourceClaimTemplateName,
+				vPod.Namespace,
+				mappings.ResourceClaimTemplates())
+			pPod.Spec.ResourceClaims[i].ResourceClaimTemplateName = ptr.To(translatedName)
+		}
+	}
 }
 
 func translateTopologySpreadConstraints(vPod *corev1.Pod, pPod *corev1.Pod) {
@@ -924,4 +991,15 @@ func parseResources(resources map[string]interface{}) (corev1.ResourceList, erro
 	}
 
 	return resourceList, nil
+}
+
+func parseEnforcedTolerations(raw []string) []corev1.Toleration {
+	result := make([]corev1.Toleration, 0, len(raw))
+	for _, s := range raw {
+		tol, err := toleration.ParseToleration(s)
+		if err == nil {
+			result = append(result, tol)
+		}
+	}
+	return result
 }

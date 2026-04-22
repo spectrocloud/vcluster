@@ -2,6 +2,7 @@ package start
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,7 +14,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-func (l *LoftStarter) upgradeLoft() error {
+func (l *LoftStarter) upgradeLoft(ctx context.Context) error {
 	extraArgs := []string{}
 	if l.NoTunnel {
 		extraArgs = append(extraArgs, "--set-string", "env.DISABLE_LOFT_ROUTER=true")
@@ -23,6 +24,10 @@ func (l *LoftStarter) upgradeLoft() error {
 	}
 	if l.Host != "" {
 		extraArgs = append(extraArgs, "--set", "ingress.enabled=true", "--set", "ingress.host="+l.Host)
+
+		if l.NoTunnel {
+			extraArgs = append(extraArgs, "--set", "config.loftHost="+l.Host)
+		}
 	}
 	if l.Version != "" {
 		extraArgs = append(extraArgs, "--version", l.Version)
@@ -33,6 +38,10 @@ func (l *LoftStarter) upgradeLoft() error {
 
 	if l.Email != "" {
 		extraArgs = append(extraArgs, "--set", "admin.email="+l.Email)
+	}
+	if os.Getenv("LICENSE_TOKEN") != "" {
+		l.Log.Infof("Found LICENSE_TOKEN in environment, will use it to install the platform")
+		extraArgs = append(extraArgs, "--set", "env.LICENSE_TOKEN="+os.Getenv("LICENSE_TOKEN"))
 	}
 
 	// Do not use --reuse-values if --reset flag is provided because this should be a new install and it will cause issues with `helm template`
@@ -55,7 +64,7 @@ func (l *LoftStarter) upgradeLoft() error {
 		chartRepo = l.ChartRepo
 	}
 
-	err := clihelper.UpgradeLoft(chartName, chartRepo, l.Context, l.Namespace, extraArgs, l.Log)
+	err := clihelper.UpgradeLoft(ctx, l.KubeClient, chartName, chartRepo, l.Context, l.Namespace, extraArgs, l.Log)
 	if err != nil {
 		if !l.Reset {
 			return errors.New(err.Error() + product.Replace(fmt.Sprintf("\n\nIf want to purge and reinstall Loft, run: %s\n", ansi.Color("loft start --reset", "green+b"))))
@@ -64,7 +73,7 @@ func (l *LoftStarter) upgradeLoft() error {
 		// Try to purge Loft and retry install
 		l.Log.Info(product.Replace("Trying to delete objects blocking Loft installation"))
 
-		manifests, err := clihelper.GetLoftManifests(chartName, chartRepo, l.Context, l.Namespace, extraArgs, l.Log)
+		manifests, err := clihelper.GetLoftManifests(ctx, l.KubeClient, chartName, chartRepo, l.Context, l.Namespace, extraArgs, l.Log)
 		if err != nil {
 			return err
 		}
@@ -82,7 +91,7 @@ func (l *LoftStarter) upgradeLoft() error {
 		_ = kubectlDelete.Run()
 
 		// Retry Loft installation
-		err = clihelper.UpgradeLoft(chartName, chartRepo, l.Context, l.Namespace, extraArgs, l.Log)
+		err = clihelper.UpgradeLoft(ctx, l.KubeClient, chartName, chartRepo, l.Context, l.Namespace, extraArgs, l.Log)
 		if err != nil {
 			return errors.New(err.Error() + product.Replace(fmt.Sprintf("\n\nLoft installation failed. Reach out to get help:\n- via Slack: %s (fastest option)\n- via Online Chat: %s\n- via Email: %s\n", ansi.Color("https://slack.loft.sh/", "green+b"), ansi.Color("https://loft.sh/", "green+b"), ansi.Color("support@loft.sh", "green+b"))))
 		}

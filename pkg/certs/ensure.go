@@ -6,24 +6,26 @@ import (
 	"crypto/ecdsa"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/loft-sh/vcluster/pkg/config"
+	"github.com/loft-sh/vcluster/pkg/kubeadm"
+	"github.com/loft-sh/vcluster/pkg/util/certhelper"
 	"golang.org/x/exp/maps"
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
-	clientcmdlatest "k8s.io/client-go/tools/clientcmd/api/latest"
 	certutil "k8s.io/client-go/util/cert"
 	"k8s.io/client-go/util/keyutil"
 	"k8s.io/klog/v2"
@@ -41,6 +43,33 @@ const (
 	CertSecretLabelAppValue        = "vcluster"
 	CertSecretLabelVclusterNameKey = "vcluster-name"
 )
+
+func Generate(ctx context.Context, serviceCIDR, certificatesDir string, options *config.VirtualClusterConfig) error {
+	currentNamespace := options.HostNamespace
+	currentNamespaceClient := options.HostClient
+
+	// create kubeadm config
+	kubeadmConfig, err := GenerateInitKubeadmConfig(serviceCIDR, certificatesDir, options)
+	if err != nil {
+		return fmt.Errorf("create kubeadm config: %w", err)
+	}
+
+	// generate certificates
+	err = EnsureCerts(ctx, currentNamespace, currentNamespaceClient, certificatesDir, options, kubeadmConfig)
+	if err != nil {
+		return fmt.Errorf("ensure certs: %w", err)
+	}
+
+	return nil
+}
+
+func GenerateInitKubeadmConfig(serviceCIDR, certificatesDir string, options *config.VirtualClusterConfig) (*kubeadmapi.InitConfiguration, error) {
+	// generate etcd server and peer sans
+	extraSans := GetEtcdExtraSANs(options)
+
+	// create kubeadm config
+	return kubeadm.InitKubeadmConfig(options, "", "127.0.0.1:6443", serviceCIDR, certificatesDir, extraSans)
+}
 
 func EnsureCerts(
 	ctx context.Context,
@@ -64,6 +93,22 @@ func EnsureCerts(
 			if err != nil {
 				return err
 			}
+
+			return nil
+		}
+
+		// Certs exist on disk, check if leaf certs are expiring
+		if diskCertsExpiringSoon(certificateDir) {
+			klog.Infof("Leaf certificates in %s are expiring soon, regenerating", certificateDir)
+
+			// Remove only leaf certs; preserve SA keys and CA keys
+			if err := removeFiles(certificateDir, excludeSAFiles, excludeCAFiles); err != nil {
+				return fmt.Errorf("remove expiring leaf certs: %w", err)
+			}
+
+			if err := generateCertificates(certificateDir, kubeadmConfig); err != nil {
+				return fmt.Errorf("regenerate certs: %w", err)
+			}
 		}
 
 		return nil
@@ -75,63 +120,40 @@ func EnsureCerts(
 	secretName := CertSecretName(options.Name)
 	secret, err := currentNamespaceClient.CoreV1().Secrets(currentNamespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err == nil {
-		// download certs from secret
-		err = downloadCertsFromSecret(secret, certificateDir)
-		if err != nil {
-			return err
+		warnIfCAExpiring(secret.Data)
+
+		if !certsExpiringSoon(secret.Data) {
+			return downloadCertsFromSecret(secret, certificateDir)
 		}
 
-		// update kube config
-		shouldUpdate, err := updateKubeconfigInSecret(secret)
-		if err != nil {
-			return err
-		} else if !shouldUpdate {
-			return nil
+		klog.Infof("Leaf certificates in secret %s/%s are expiring soon, regenerating", currentNamespace, secretName)
+
+		// Download existing certs to disk (preserves CA and SA keys)
+		if err := downloadCertsFromSecret(secret, certificateDir); err != nil {
+			return fmt.Errorf("download certs before renewal: %w", err)
 		}
 
-		// delete the certs and recreate them
-		klog.Info("removing outdated certs")
-		err = os.Remove(filepath.Join(certificateDir, "apiserver.crt"))
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-		err = os.Remove(filepath.Join(certificateDir, "apiserver.key"))
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
+		// Remove only expiring leaf certs from disk (preserves CA and SA keys)
+		if err := removeFiles(certificateDir, excludeSAFiles, excludeCAFiles); err != nil {
+			return fmt.Errorf("remove expiring leaf certs: %w", err)
 		}
 
-		// only create the files if the files are not there yet
-		err = certs.CreatePKIAssets(kubeadmConfig)
-		if err != nil {
-			// ignore the error because some other certs are upsetting the function
-			klog.V(1).Info("create pki assets err:", err)
-		}
-		cert, err := os.ReadFile(filepath.Join(certificateDir, "apiserver.crt"))
-		if err != nil {
-			return err
-		}
-		key, err := os.ReadFile(filepath.Join(certificateDir, "apiserver.key"))
-		if err != nil {
-			return err
-		}
-		secret.Data["apiserver.crt"] = cert
-		secret.Data["apiserver.key"] = key
-		_, err = currentNamespaceClient.CoreV1().Secrets(currentNamespace).Update(ctx, secret, metav1.UpdateOptions{})
-		if err != nil {
-			return err
+		// Regenerate missing certs
+		if err := generateCertificates(certificateDir, kubeadmConfig); err != nil {
+			return fmt.Errorf("regenerate certs: %w", err)
 		}
 
-		return downloadCertsFromSecret(secret, certificateDir)
+		// Patch the secret in-place
+		if err := SyncSecret(ctx, currentNamespace, secretName, certificateDir, currentNamespaceClient); err != nil {
+			return fmt.Errorf("sync renewed certs to secret: %w", err)
+		}
+
+		return nil
 	}
 
-	// we check if the files are already there
-	_, err = os.Stat(filepath.Join(certificateDir, CAKeyName))
-	if errors.Is(err, fs.ErrNotExist) {
-		// try to generate the certificates
-		err = generateCertificates(certificateDir, kubeadmConfig)
-		if err != nil {
-			return err
-		}
+	err = generateCertificates(certificateDir, kubeadmConfig)
+	if err != nil {
+		return err
 	}
 
 	ownerRef := []metav1.OwnerReference{}
@@ -176,15 +198,6 @@ func EnsureCerts(
 		secret.Data[toName] = data
 	}
 
-	// find extra files in the folder and add them to the secret
-	extraFiles, err := extraFiles(certificateDir)
-	if err != nil {
-		return fmt.Errorf("read extra file: %w", err)
-	}
-	for k, v := range extraFiles {
-		secret.Data[k] = v
-	}
-
 	// finally create the secret
 	secret, err = currentNamespaceClient.CoreV1().Secrets(currentNamespace).Create(ctx, secret, metav1.CreateOptions{})
 	if err != nil {
@@ -202,6 +215,100 @@ func EnsureCerts(
 	}
 
 	return downloadCertsFromSecret(secret, certificateDir)
+}
+
+// certsExpiringSoon checks whether any leaf certificate in the secret data is
+// expired or within the renewal threshold. CA certificates are excluded.
+func certsExpiringSoon(secretData map[string][]byte) bool {
+	for _, secretKey := range certMap {
+		if !strings.HasSuffix(secretKey, ".crt") {
+			continue
+		}
+		// Skip CA certs
+		if isCAFile(secretKey) {
+			continue
+		}
+		pemBytes, ok := secretData[secretKey]
+		if !ok || len(pemBytes) == 0 {
+			return true // missing cert → needs regeneration
+		}
+		certs, err := certhelper.ParseCertsPEM(pemBytes)
+		if err != nil {
+			return true // unparseable → needs regeneration
+		}
+		for _, cert := range certs {
+			if certhelper.IsCertExpired(cert) {
+				klog.Infof("Leaf certificate %s (CN=%s) expires at %s, within renewal threshold",
+					secretKey, cert.Subject.CommonName, cert.NotAfter.Format(time.RFC3339))
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// diskCertsExpiringSoon checks whether any leaf certificate on disk is expired
+// or within the renewal threshold. Used for standalone mode.
+func diskCertsExpiringSoon(certificateDir string) bool {
+	for certFile, secretKey := range certMap {
+		if !strings.HasSuffix(secretKey, ".crt") {
+			continue
+		}
+		if isCAFile(secretKey) {
+			continue
+		}
+		pemBytes, err := os.ReadFile(filepath.Join(certificateDir, certFile))
+		if err != nil {
+			return true // missing cert → needs regeneration
+		}
+		certs, err := certhelper.ParseCertsPEM(pemBytes)
+		if err != nil {
+			return true // unparseable → needs regeneration
+		}
+		for _, cert := range certs {
+			if certhelper.IsCertExpired(cert) {
+				klog.Infof("Leaf certificate %s (CN=%s) expires at %s, within renewal threshold",
+					certFile, cert.Subject.CommonName, cert.NotAfter.Format(time.RFC3339))
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isCAFile returns true if the given secret key corresponds to a CA certificate.
+func isCAFile(secretKey string) bool {
+	return secretKey == CACertName ||
+		secretKey == ServerCACertName ||
+		secretKey == ClientCACertName ||
+		secretKey == FrontProxyCACertName ||
+		secretKey == strings.ReplaceAll(EtcdCACertName, "/", "-")
+}
+
+// warnIfCAExpiring logs warnings for any CA certificates approaching expiry.
+func warnIfCAExpiring(secretData map[string][]byte) {
+	for _, secretKey := range certMap {
+		if !strings.HasSuffix(secretKey, ".crt") {
+			continue
+		}
+		if !isCAFile(secretKey) {
+			continue
+		}
+		pemBytes, ok := secretData[secretKey]
+		if !ok || len(pemBytes) == 0 {
+			continue
+		}
+		certs, err := certhelper.ParseCertsPEM(pemBytes)
+		if err != nil {
+			continue
+		}
+		for _, cert := range certs {
+			if certhelper.IsCertExpired(cert) {
+				klog.Warningf("CA certificate (CN=%s) expires at %s; run %q to renew",
+					cert.Subject.CommonName, cert.NotAfter.Format(time.RFC3339), "vcluster certs rotate-ca")
+			}
+		}
+	}
 }
 
 func CertSecretName(vClusterName string) string {
@@ -289,8 +396,36 @@ func downloadCertsFromSecret(
 }
 
 func splitCACert(certificateDir string) error {
+	// The CA cert might be a bundle containing multiple certificates.
+	// The csr-controller expects exactly 1 certificate, so we
+	// require the CA cert to be first in the bundle.
+	certBundle, err := os.ReadFile(filepath.Join(certificateDir, CACertName))
+	if err != nil {
+		return fmt.Errorf("reading ca.crt: %w", err)
+	}
+
+	block, _ := pem.Decode(certBundle)
+	if block == nil {
+		return fmt.Errorf("no PEM data found")
+	}
+
+	if block.Type != "CERTIFICATE" {
+		return fmt.Errorf("first PEM block is not a certificate")
+	}
+
+	tmp, err := os.MkdirTemp("", "")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+
+	fp := filepath.Join(tmp, "ca.pem")
+	if err := os.WriteFile(fp, pem.EncodeToMemory(block), 0640); err != nil {
+		return fmt.Errorf("writing ca.pem: %w", err)
+	}
+
 	// make sure to write server-ca and client-ca to file system
-	err := copyFileIfNotExists(filepath.Join(certificateDir, CACertName), filepath.Join(certificateDir, ServerCACertName))
+	err = copyFileIfNotExists(fp, filepath.Join(certificateDir, ServerCACertName))
 	if err != nil {
 		return fmt.Errorf("copy %s: %w", ServerCACertName, err)
 	}
@@ -298,7 +433,7 @@ func splitCACert(certificateDir string) error {
 	if err != nil {
 		return fmt.Errorf("copy %s: %w", ServerCAKeyName, err)
 	}
-	err = copyFileIfNotExists(filepath.Join(certificateDir, CACertName), filepath.Join(certificateDir, ClientCACertName))
+	err = copyFileIfNotExists(fp, filepath.Join(certificateDir, ClientCACertName))
 	if err != nil {
 		return fmt.Errorf("copy %s: %w", ClientCACertName, err)
 	}
@@ -321,83 +456,6 @@ func copyFileIfNotExists(src, dst string) error {
 		return os.WriteFile(dst, srcBytes, 0666)
 	}
 	return nil
-}
-
-func extraFiles(certificateDir string) (map[string][]byte, error) {
-	files := make(map[string][]byte)
-	entries, err := os.ReadDir(certificateDir)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, v := range entries {
-		if v.IsDir() {
-			// ignore subdirectories for now
-			// etcd files should be picked up by the map
-			continue
-		}
-
-		// if it's not in the cert map, add to the map
-		name := v.Name()
-		_, ok := certMap[name]
-		if !ok {
-			b, err := os.ReadFile(filepath.Join(certificateDir, name))
-			if err != nil {
-				return nil, err
-			}
-
-			files[name] = b
-		}
-	}
-
-	return files, err
-}
-
-func updateKubeconfigToLocalhost(config *clientcmdapi.Config) bool {
-	updated := false
-	// not sure what that would do in case of multiple clusters,
-	// but this is not expected AFAIU
-	for k, v := range config.Clusters {
-		if v == nil {
-			continue
-		}
-
-		if v.Server != "https://127.0.0.1:6443" {
-			if config.Clusters[k] == nil {
-				config.Clusters[k] = &clientcmdapi.Cluster{}
-			}
-
-			config.Clusters[k].Server = "https://127.0.0.1:6443"
-			updated = true
-		}
-	}
-	return updated
-}
-
-func updateKubeconfigInSecret(secret *corev1.Secret) (shouldUpdate bool, err error) {
-	shouldUpdate = false
-	for k, v := range secret.Data {
-		if !strings.HasSuffix(k, ".conf") {
-			continue
-		}
-		config := &clientcmdapi.Config{}
-		err = runtime.DecodeInto(clientcmdlatest.Codec, v, config)
-		if err != nil {
-			return false, err
-		}
-		hasChanged := updateKubeconfigToLocalhost(config)
-		if !hasChanged {
-			continue
-		}
-		shouldUpdate = true
-
-		marshalled, err := runtime.Encode(clientcmdlatest.Codec, config)
-		if err != nil {
-			return false, err
-		}
-		secret.Data[k] = marshalled
-	}
-	return shouldUpdate, nil
 }
 
 // KubeConfigOptions struct holds info required to build a KubeConfig object
@@ -473,4 +531,49 @@ func BuildKubeConfig(spec *KubeConfigOptions) (*clientcmdapi.Config, error) {
 		encodedClientKey,
 		pkiutil.EncodeCertPEM(clientCert),
 	), nil
+}
+
+func GetEtcdExtraSANs(options *config.VirtualClusterConfig) []string {
+	clusterDomain := options.Networking.Advanced.ClusterDomain
+	currentNamespace := options.HostNamespace
+	// generate etcd server and peer sans
+	extraSans := []string{
+		"localhost",
+	}
+
+	if options.ControlPlane.Standalone.Enabled {
+		extraSans = append(extraSans, "127.0.0.1", "0.0.0.0")
+	} else {
+		etcdService := options.Name + "-etcd"
+		extraSans = append(extraSans,
+			etcdService,
+			etcdService+"-headless",
+			etcdService+"."+currentNamespace,
+			etcdService+"."+currentNamespace+".svc",
+		)
+		// add wildcard
+		for _, service := range []string{options.Name, etcdService} {
+			extraSans = append(
+				extraSans,
+				"*."+service+"-headless",
+				"*."+service+"-headless"+"."+currentNamespace,
+				"*."+service+"-headless"+"."+currentNamespace+".svc",
+				"*."+service+"-headless"+"."+currentNamespace+".svc."+clusterDomain,
+			)
+		}
+
+		// expect up to 5 etcd members
+		for i := range 5 {
+			// this is for embedded etcd
+			hostname := options.Name + "-" + strconv.Itoa(i)
+			extraSans = append(extraSans, hostname, hostname+"."+options.Name+"-headless", hostname+"."+options.Name+"-headless"+"."+currentNamespace)
+
+			// this is for external etcd
+			etcdHostname := etcdService + "-" + strconv.Itoa(i)
+			extraSans = append(extraSans, etcdHostname, etcdHostname+"."+etcdService+"-headless", etcdHostname+"."+etcdService+"-headless"+"."+currentNamespace)
+		}
+	}
+
+	extraSans = append(extraSans, options.ControlPlane.Proxy.ExtraSANs...)
+	return extraSans
 }

@@ -104,29 +104,11 @@ func All(ctx context.Context, client clientpkg.Client, skip []string, infoFn Log
 			objects = append(objects, objs...)
 		}
 	}
-	if !contains(skip, "devpodworkspacetemplates") {
-		infoFn("Backing up devpod workspace templates...")
-		objs, err := devPodWorkspaceTemplate(ctx, client)
-		if err != nil {
-			backupErrors = append(backupErrors, errors.Wrap(err, "backup devpod workspace templates"))
-		} else {
-			objects = append(objects, objs...)
-		}
-	}
 	if !contains(skip, "clusters") {
 		infoFn("Backing up clusters...")
 		objs, err := clusters(ctx, client)
 		if err != nil {
 			backupErrors = append(backupErrors, errors.Wrap(err, "backup clusters"))
-		} else {
-			objects = append(objects, objs...)
-		}
-	}
-	if !contains(skip, "runners") {
-		infoFn("Backing up runners...")
-		objs, err := runners(ctx, client)
-		if err != nil {
-			backupErrors = append(backupErrors, errors.Wrap(err, "backup runners"))
 		} else {
 			objects = append(objects, objs...)
 		}
@@ -149,15 +131,6 @@ func All(ctx context.Context, client clientpkg.Client, skip []string, infoFn Log
 			objs, err := virtualClusterInstances(ctx, client, projects)
 			if err != nil {
 				backupErrors = append(backupErrors, errors.Wrap(err, "backup virtual cluster instances"))
-			} else {
-				objects = append(objects, objs...)
-			}
-		}
-		if !contains(skip, "devpodworkspaceinstances") {
-			infoFn("Backing up devpod workspace instances...")
-			objs, err := devPodWorkspaceInstances(ctx, client, projects)
-			if err != nil {
-				backupErrors = append(backupErrors, errors.Wrap(err, "backup devpod workspace instances"))
 			} else {
 				objects = append(objects, objs...)
 			}
@@ -222,30 +195,6 @@ func virtualClusterInstances(ctx context.Context, client clientpkg.Client, proje
 		for _, o := range virtualClusterInstanceList.Items {
 			u := o
 			u.Status = storagev1.VirtualClusterInstanceStatus{}
-			err := resetMetadata(client.Scheme(), &u)
-			if err != nil {
-				return nil, err
-			}
-
-			retList = append(retList, &u)
-		}
-	}
-
-	return retList, nil
-}
-
-func devPodWorkspaceInstances(ctx context.Context, client clientpkg.Client, projects []string) ([]runtime.Object, error) {
-	retList := []runtime.Object{}
-	for _, projectName := range projects {
-		devPodWorkspaceInstanceList := &storagev1.DevPodWorkspaceInstanceList{}
-		err := client.List(ctx, devPodWorkspaceInstanceList, clientpkg.InNamespace(projectutil.ProjectNamespace(projectName)))
-		if err != nil {
-			return nil, err
-		}
-
-		for _, o := range devPodWorkspaceInstanceList.Items {
-			u := o
-			u.Status = storagev1.DevPodWorkspaceInstanceStatus{}
 			err := resetMetadata(client.Scheme(), &u)
 			if err != nil {
 				return nil, err
@@ -346,28 +295,6 @@ func clusters(ctx context.Context, client clientpkg.Client) ([]runtime.Object, e
 	return retList, nil
 }
 
-func runners(ctx context.Context, client clientpkg.Client) ([]runtime.Object, error) {
-	runnerList := &storagev1.RunnerList{}
-	err := client.List(ctx, runnerList)
-	if err != nil {
-		return nil, err
-	}
-
-	retList := []runtime.Object{}
-	for _, o := range runnerList.Items {
-		u := o
-		u.Status = storagev1.RunnerStatus{}
-		err := resetMetadata(client.Scheme(), &u)
-		if err != nil {
-			return nil, err
-		}
-
-		retList = append(retList, &u)
-	}
-
-	return retList, nil
-}
-
 func clusterRoles(ctx context.Context, client clientpkg.Client) ([]runtime.Object, error) {
 	objs := &storagev1.ClusterRoleTemplateList{}
 	err := client.List(ctx, objs)
@@ -445,28 +372,6 @@ func spaceTemplates(ctx context.Context, client clientpkg.Client) ([]runtime.Obj
 	for _, o := range spaceTemplates.Items {
 		u := o
 		u.Status = storagev1.SpaceTemplateStatus{}
-		err := resetMetadata(client.Scheme(), &u)
-		if err != nil {
-			return nil, err
-		}
-
-		retList = append(retList, &u)
-	}
-
-	return retList, nil
-}
-
-func devPodWorkspaceTemplate(ctx context.Context, client clientpkg.Client) ([]runtime.Object, error) {
-	devPodWorkspaceTemplates := &storagev1.DevPodWorkspaceTemplateList{}
-	err := client.List(ctx, devPodWorkspaceTemplates)
-	if err != nil {
-		return nil, err
-	}
-
-	retList := []runtime.Object{}
-	for _, o := range devPodWorkspaceTemplates.Items {
-		u := o
-		u.Status = storagev1.DevPodWorkspaceTemplateStatus{}
 		err := resetMetadata(client.Scheme(), &u)
 		if err != nil {
 			return nil, err

@@ -27,15 +27,18 @@ build-snapshot:
   cp Dockerfile.release {{DIST_FOLDER}}/Dockerfile
   cd {{DIST_FOLDER}} && docker buildx build --load . -t ghcr.io/loft-sh/vcluster:dev-next
 
-# --- Kind ---
+# --- vind ---
 
-# Create a local kind cluster
-create-kind:
-  kind create cluster -n vcluster
+# Create a local vind cluster
+create-vind:
+  vcluster delete vcluster --driver docker 2>/dev/null || true
+  vcluster use driver docker
+  vcluster create vcluster --connect=false
+  vcluster connect vcluster --update-current
 
-# Delete the local kind cluster
-delete-kind:
-  kind delete cluster -n vcluster
+# Delete the local vind cluster
+delete-vind:
+  vcluster delete vcluster --driver docker
 
 # --- Build ---
 
@@ -85,48 +88,66 @@ embed-chart version="0.0.0":
 test-chart:
   helm unittest chart
 
-# Run e2e tests
-e2e distribution="k3s" path="./test/e2e" multinamespace="false": create-kind && delete-kind
-  echo "Execute test suites ({{ distribution }}, {{ path }}, {{ multinamespace }})"
+# --- Lint ---
 
-  TELEMETRY_PRIVATE_KEY="" goreleaser build --snapshot --clean
-  cp dist/vcluster_linux_$(go env GOARCH | sed s/amd64/amd64_v1/g | sed s/arm64/arm64_v8.0/g)/vcluster ./vcluster
-  docker build -t vcluster:e2e-latest -f Dockerfile.release --build-arg TARGETARCH=$(uname -m | sed s/x86_64/amd64/g) --build-arg TARGETOS=linux .
-  rm ./vcluster
+# Rebuild tools/golangci-lint if sources changed or binary is missing
+[private]
+_ensure-linters:
+  #!/usr/bin/env bash
+  if [ ! -f ./tools/golangci-lint ] || \
+     [ -n "$(find .custom-gcl.yml -newer ./tools/golangci-lint \( -name '*.yml' \) 2>/dev/null | head -1)" ]; then
+    echo "Custom linters changed - rebuilding tools/golangci-lint..."
+    golangci-lint custom
+  fi
 
-  kind load docker-image vcluster:e2e-latest -n vcluster
+# Run golangci-lint for all packages
+lint *ARGS: _ensure-linters
+  ./tools/golangci-lint cache clean
+  ./tools/golangci-lint run {{ARGS}} -- ./...
 
-  cp test/commonValues.yaml dist/commonValues.yaml
+# Build the custom golangci-lint binary (required after linter code changes)
+build-linters:
+  golangci-lint custom
 
-  sed -i.bak "s|REPLACE_REPOSITORY_NAME|vcluster|g" dist/commonValues.yaml
-  sed -i.bak "s|REPLACE_TAG_NAME|e2e-latest|g" dist/commonValues.yaml
-  yq eval -i '.controlPlane.distro.{{distribution}}.enabled = true' dist/commonValues.yaml
-  rm dist/commonValues.yaml.bak
+# Run custom linters against e2e-next (with autofix)
+lint-e2e: _ensure-linters
+  ./tools/golangci-lint run --fix -- ./e2e-next/...
 
-  sed -i.bak "s|kind-control-plane|vcluster-control-plane|g" dist/commonValues.yaml
-  rm dist/commonValues.yaml.bak
+setup-csi-volume-snapshots:
+  # Deploy upstream CSI volume snapshot CRDs and snapshot-controller
+  kubectl kustomize https://github.com/kubernetes-csi/external-snapshotter/client/config/crd | kubectl create -f -
+  kubectl kustomize https://github.com/kubernetes-csi/external-snapshotter/deploy/kubernetes/snapshot-controller | kubectl create -f -
 
-  kubectl create namespace from-host-sync-test
-  kubectl create namespace from-host-sync-test-2
-  ./dist/vcluster-cli_$(go env GOOS)_$(go env GOARCH | sed s/amd64/amd64_v1/g | sed s/arm64/arm64_v8.0/g)/vcluster \
-    create vcluster -n vcluster \
-    --create-namespace \
-    --debug \
-    --connect=false \
-    --local-chart-dir ./chart/ \
-    -f ./dist/commonValues.yaml \
-    -f {{ path }}/values.yaml \
-    $([[ "{{ multinamespace }}" = "true" ]] && echo "-f ./test/multins_values.yaml" || echo "")
+  # Deploy CSI driver, StorageClass and VolumeSnapshotClass
+  temp_git_dir=$(mktemp -d) && \
+    git clone https://github.com/kubernetes-csi/csi-driver-host-path.git $temp_git_dir && \
+    $temp_git_dir/deploy/kubernetes-latest/deploy.sh && \
+    kubectl apply -f $temp_git_dir/examples/csi-storageclass.yaml && \
+    kubectl apply -f $temp_git_dir/examples/csi-volumesnapshotclass.yaml && \
+    kubectl annotate volumesnapshotclass csi-hostpath-snapclass \
+      snapshot.storage.kubernetes.io/is-default-class="true" && \
+    rm -rf $temp_git_dir
 
-  kubectl wait --for=condition=ready pod -l app=vcluster -n vcluster --timeout=300s
+  # wait for snapshot-controller to be ready
+  kubectl wait --for=condition=Available -n kube-system deploy/snapshot-controller --timeout=60s
 
-  cd {{path}} && VCLUSTER_SUFFIX=vcluster \
-    VCLUSTER_NAME=vcluster \
-    VCLUSTER_NAMESPACE=vcluster \
-    MULTINAMESPACE_MODE={{ multinamespace }} \
-    KIND_NAME=vcluster \
-    go test -v -ginkgo.v -ginkgo.skip='.*NetworkPolicy.*' -ginkgo.fail-fast
+#e2e-next tests
+@dev-e2e label-filter="core" image="ghcr.io/loft-sh/vcluster:dev-next" *ARGS='': \
+  (setup label-filter image) \
+  (run-e2e label-filter image "false") \
+  (teardown label-filter)
 
+@run-e2e label-filter="core" image="ghcr.io/loft-sh/vcluster:dev-next" teardown="true":
+  ginkgo -timeout=0 -v --procs=8 --label-filter="{{label-filter}}" ./e2e-next -- --vcluster-image="{{image}}" --teardown={{teardown}}
+
+@iterate-e2e label-filter="core" image="ghcr.io/loft-sh/vcluster:dev-next": \
+  (run-e2e label-filter image "false")
+
+@setup label-filter="core" image="ghcr.io/loft-sh/vcluster:dev-next":
+  GINKGO_EDITOR_INTEGRATION=just ginkgo -timeout=0 -v --label-filter="{{label-filter}}" --silence-skips ./e2e-next -- --vcluster-image="{{image}}" --setup-only
+
+@teardown label-filter="core":
+  GINKGO_EDITOR_INTEGRATION=just ginkgo -timeout=0 -v --label-filter="{{label-filter}}" --silence-skips ./e2e-next -- --teardown-only
 
 cli version="0.0.0" *ARGS="":
   RELEASE_VERSION={{ version }} go generate -tags embed_chart ./...

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -10,11 +11,19 @@ import (
 	"strings"
 
 	"github.com/ghodss/yaml"
+	"github.com/samber/lo"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
+	corev1 "k8s.io/api/core/v1"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/validation"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/loft-sh/vcluster/config"
+	cliconfig "github.com/loft-sh/vcluster/pkg/cli/config"
 	"github.com/loft-sh/vcluster/pkg/constants"
+	"github.com/loft-sh/vcluster/pkg/platform"
 	"github.com/loft-sh/vcluster/pkg/util/namespaces"
 	"github.com/loft-sh/vcluster/pkg/util/toleration"
 )
@@ -25,7 +34,11 @@ var allowedPodSecurityStandards = map[string]bool{
 	"restricted": true,
 }
 
-var verbs = []string{"get", "list", "create", "update", "patch", "watch", "delete", "deletecollection"}
+var (
+	errExportKubeConfigBothSecretAndAdditionalSecretsSet       = errors.New("exportKubeConfig.Secret and exportKubeConfig.AdditionalSecrets cannot be set at the same time")
+	errExportKubeConfigAdditionalSecretWithoutNameAndNamespace = errors.New("additional secret must have name and/or namespace set")
+	errExportKubeConfigServerNotValid                          = errors.New("exportKubeConfig.Server has to be set to a valid URL (with https:// or http:// prefix)")
+)
 
 func ValidateConfigAndSetDefaults(vConfig *VirtualClusterConfig) error {
 	// check the value of pod security standard
@@ -75,6 +88,14 @@ func ValidateConfigAndSetDefaults(vConfig *VirtualClusterConfig) error {
 		return err
 	}
 
+	// validate custom resources are not configured for both sync and proxy
+	if err := ValidateCustomResourceSyncProxyConflicts(
+		vConfig.Sync.ToHost.CustomResources,
+		vConfig.Sync.FromHost.CustomResources,
+		vConfig.Experimental.Proxy.CustomResources); err != nil {
+		return err
+	}
+
 	// check if custom resources have correct scope
 	for key, customResource := range vConfig.Sync.ToHost.CustomResources {
 		if customResource.Scope != "" && customResource.Scope != config.ScopeNamespaced {
@@ -93,24 +114,6 @@ func ValidateConfigAndSetDefaults(vConfig *VirtualClusterConfig) error {
 	err := ValidateAllSyncPatches(vConfig.Sync)
 	if err != nil {
 		return err
-	}
-
-	// disallow old and new generic sync to be used together
-	if len(vConfig.Sync.ToHost.CustomResources) > 0 || len(vConfig.Sync.FromHost.CustomResources) > 0 {
-		// check if generic sync exports are used
-		if len(vConfig.Experimental.GenericSync.Exports) > 0 {
-			return errors.New("experimental.genericSync.exports is not allowed when using sync.toHost.customResources or sync.fromHost.customResources")
-		}
-
-		// check if generic sync imports are used
-		if len(vConfig.Experimental.GenericSync.Imports) > 0 {
-			return errors.New("experimental.genericSync.imports is not allowed when using sync.toHost.customResources or sync.fromHost.customResources")
-		}
-
-		// check if hooks are used
-		if vConfig.Experimental.GenericSync.Hooks != nil && (len(vConfig.Experimental.GenericSync.Hooks.HostToVirtual) > 0 || len(vConfig.Experimental.GenericSync.Hooks.VirtualToHost) > 0) {
-			return errors.New("experimental.genericSync.hooks is not allowed when using sync.toHost.customResources or sync.fromHost.customResources. Please use sync.*.patches.expression instead")
-		}
 	}
 
 	// check if nodes controller needs to be enabled
@@ -141,18 +144,6 @@ func ValidateConfigAndSetDefaults(vConfig *VirtualClusterConfig) error {
 		return err
 	}
 
-	// validate generic sync config
-	err = validateGenericSyncConfig(vConfig.Experimental.GenericSync)
-	if err != nil {
-		return fmt.Errorf("validate experimental.genericSync")
-	}
-
-	// validate distro
-	err = validateDistro(vConfig)
-	if err != nil {
-		return err
-	}
-
 	// check deny proxy requests
 	for _, c := range vConfig.Experimental.DenyProxyRequests {
 		err := validateCheck(c)
@@ -178,17 +169,13 @@ func ValidateConfigAndSetDefaults(vConfig *VirtualClusterConfig) error {
 		return err
 	}
 
-	if isUsingOldGenericSync(vConfig.Experimental.GenericSync) && vConfig.Sync.ToHost.Namespaces.Enabled {
-		return errors.New("experimental.genericSync.imports is not allowed when using sync.toHost.namespaces")
-	}
-
 	// sync.toHost.namespaces validation
-	err = namespaces.ValidateNamespaceSyncConfig(&vConfig.Config, vConfig.Name, vConfig.ControlPlaneNamespace)
+	err = namespaces.ValidateNamespaceSyncConfig(&vConfig.Config, vConfig.Name, vConfig.HostNamespace)
 	if err != nil {
 		return fmt.Errorf("namespace sync: %w", err)
 	}
 
-	// if we're runnign in with namespace sync enabled, we want to sync all objects.
+	// if we're running in with namespace sync enabled, we want to sync all objects.
 	// otherwise, objects created on host in synced namespaces won't get imported into vCluster.
 	if vConfig.Sync.ToHost.Namespaces.Enabled {
 		vConfig.Sync.ToHost.Secrets.All = true
@@ -198,6 +185,11 @@ func ValidateConfigAndSetDefaults(vConfig *VirtualClusterConfig) error {
 	// set service name
 	if vConfig.ControlPlane.Advanced.WorkloadServiceAccount.Name == "" {
 		vConfig.ControlPlane.Advanced.WorkloadServiceAccount.Name = "vc-workload-" + vConfig.Name
+	}
+
+	err = validateAdvancedControlPlaneConfig(vConfig.ControlPlane.Advanced)
+	if err != nil {
+		return err
 	}
 
 	// check config for exporting kubeconfig Secrets
@@ -222,6 +214,16 @@ func ValidateConfigAndSetDefaults(vConfig *VirtualClusterConfig) error {
 	err = ValidateSyncFromHostClasses(vConfig.Config.Sync.FromHost)
 	if err != nil {
 		return err
+	}
+
+	// validate deploy.volumeSnapshotController
+	err = ValidateVolumeSnapshotController(vConfig.Config.Deploy.VolumeSnapshotController, vConfig.PrivateNodes)
+	if err != nil {
+		return err
+	}
+	// auto-enable volume snapshot rules in shared mode
+	if !vConfig.Config.PrivateNodes.Enabled && vConfig.RBAC.EnableVolumeSnapshotRules.Enabled == "auto" {
+		vConfig.RBAC.EnableVolumeSnapshotRules.Enabled = "true"
 	}
 
 	return nil
@@ -249,6 +251,8 @@ func ValidateAllSyncPatches(sync config.Sync) error {
 			{"sync.toHost.persistentVolumes", sync.ToHost.PersistentVolumes.Patches},
 			{"sync.toHost.podDisruptionBudgets", sync.ToHost.PodDisruptionBudgets.Patches},
 			{"sync.toHost.priorityClasses", sync.ToHost.PriorityClasses.Patches},
+			{"sync.toHost.resourceClaims", sync.ToHost.ResourceClaims.Patches},
+			{"sync.toHost.resourceClaimTemplates", sync.ToHost.ResourceClaimTemplates.Patches},
 			{"sync.toHost.storageClasses", sync.ToHost.StorageClasses.Patches},
 			{"sync.toHost.volumeSnapshots", sync.ToHost.VolumeSnapshots.Patches},
 			{"sync.toHost.volumeSnapshotContents", sync.ToHost.VolumeSnapshotContents.Patches},
@@ -263,6 +267,7 @@ func ValidateAllSyncPatches(sync config.Sync) error {
 			{"sync.fromHost.events", sync.FromHost.Events.Patches},
 			{"sync.fromHost.volumeSnapshotClasses", sync.FromHost.VolumeSnapshotClasses.Patches},
 			{"sync.fromHost.configMaps", sync.FromHost.ConfigMaps.Patches},
+			{"sync.fromHost.deviceClasses", sync.FromHost.DeviceClasses.Patches},
 		}...,
 	)
 }
@@ -298,6 +303,22 @@ func validatePatches(patchesValidation ...patchesValidation) error {
 	return nil
 }
 
+func ValidatePlatformProject(ctx context.Context, config *config.Config, loadedConfig *cliconfig.CLI) error {
+	platformConfig := config.GetPlatformConfig()
+	if platformConfig.Project != "" {
+		management, err := platform.NewClientFromConfig(loadedConfig).Management()
+		if err != nil {
+			return err
+		}
+		_, err = management.Loft().ManagementV1().Projects().Get(ctx, platformConfig.Project, metav1.GetOptions{})
+		if kerrors.IsNotFound(err) {
+			return fmt.Errorf("platform project %q not found", platformConfig.Project)
+		}
+	}
+
+	return nil
+}
+
 func ValidateSyncFromHostClasses(fromHost config.SyncFromHost) error {
 	errorFn := func(sls config.StandardLabelSelector, path string) error {
 		if _, err := sls.ToSelector(); err != nil {
@@ -317,180 +338,6 @@ func ValidateSyncFromHostClasses(fromHost config.SyncFromHost) error {
 	if err := errorFn(fromHost.StorageClasses.Selector, "storageClasses"); err != nil {
 		return err
 	}
-	return nil
-}
-
-func validateDistro(config *VirtualClusterConfig) error {
-	enabledDistros := 0
-	if config.ControlPlane.Distro.K3S.Enabled {
-		enabledDistros++
-	}
-	if config.ControlPlane.Distro.K8S.Enabled {
-		enabledDistros++
-	}
-
-	if enabledDistros > 1 {
-		return fmt.Errorf("only one distribution can be enabled")
-	}
-	return nil
-}
-
-func validateGenericSyncConfig(config config.ExperimentalGenericSync) error {
-	err := validateExportDuplicates(config.Exports)
-	if err != nil {
-		return err
-	}
-
-	for idx, exp := range config.Exports {
-		if exp == nil {
-			return fmt.Errorf("exports[%d] is required", idx)
-		}
-
-		if exp.Kind == "" {
-			return fmt.Errorf("exports[%d].kind is required", idx)
-		}
-
-		if exp.APIVersion == "" {
-			return fmt.Errorf("exports[%d].APIVersion is required", idx)
-		}
-
-		for patchIdx, patch := range exp.Patches {
-			err := validatePatch(patch)
-			if err != nil {
-				return fmt.Errorf("invalid exports[%d].patches[%d]: %w", idx, patchIdx, err)
-			}
-		}
-
-		for patchIdx, patch := range exp.ReversePatches {
-			err := validatePatch(patch)
-			if err != nil {
-				return fmt.Errorf("invalid exports[%d].reversPatches[%d]: %w", idx, patchIdx, err)
-			}
-		}
-	}
-
-	err = validateImportDuplicates(config.Imports)
-	if err != nil {
-		return err
-	}
-
-	for idx, imp := range config.Imports {
-		if imp == nil {
-			return fmt.Errorf("imports[%d] is required", idx)
-		}
-
-		if imp.Kind == "" {
-			return fmt.Errorf("imports[%d].kind is required", idx)
-		}
-
-		if imp.APIVersion == "" {
-			return fmt.Errorf("imports[%d].APIVersion is required", idx)
-		}
-
-		for patchIdx, patch := range imp.Patches {
-			err := validatePatch(patch)
-			if err != nil {
-				return fmt.Errorf("invalid imports[%d].patches[%d]: %w", idx, patchIdx, err)
-			}
-		}
-
-		for patchIdx, patch := range imp.ReversePatches {
-			err := validatePatch(patch)
-			if err != nil {
-				return fmt.Errorf("invalid imports[%d].reversPatches[%d]: %w", idx, patchIdx, err)
-			}
-		}
-	}
-
-	if config.Hooks != nil {
-		// HostToVirtual validation
-		for idx, hook := range config.Hooks.HostToVirtual {
-			for idy, verb := range hook.Verbs {
-				if err := validateVerb(verb); err != nil {
-					return fmt.Errorf("invalid hooks.hostToVirtual[%d].verbs[%d]: %w", idx, idy, err)
-				}
-			}
-
-			for idy, patch := range hook.Patches {
-				if err := validatePatch(patch); err != nil {
-					return fmt.Errorf("invalid hooks.hostToVirtual[%d].patches[%d]: %w", idx, idy, err)
-				}
-			}
-		}
-
-		// VirtualToHost validation
-		for idx, hook := range config.Hooks.VirtualToHost {
-			for idy, verb := range hook.Verbs {
-				if err := validateVerb(verb); err != nil {
-					return fmt.Errorf("invalid hooks.virtualToHost[%d].verbs[%d]: %w", idx, idy, err)
-				}
-			}
-
-			for idy, patch := range hook.Patches {
-				if err := validatePatch(patch); err != nil {
-					return fmt.Errorf("invalid hooks.virtualToHost[%d].patches[%d]: %w", idx, idy, err)
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-func validatePatch(patch *config.Patch) error {
-	switch patch.Operation {
-	case config.PatchTypeRemove, config.PatchTypeReplace, config.PatchTypeAdd:
-		if patch.FromPath != "" {
-			return fmt.Errorf("fromPath is not supported for this operation")
-		}
-
-		return nil
-	case config.PatchTypeRewriteName, config.PatchTypeRewriteLabelSelector, config.PatchTypeRewriteLabelKey, config.PatchTypeRewriteLabelExpressionsSelector:
-		return nil
-	case config.PatchTypeCopyFromObject:
-		if patch.FromPath == "" {
-			return fmt.Errorf("fromPath is required for this operation")
-		}
-
-		return nil
-	default:
-		return fmt.Errorf("unsupported patch type %s", patch.Operation)
-	}
-}
-
-func validateVerb(verb string) error {
-	if !slices.Contains(verbs, verb) {
-		return fmt.Errorf("invalid verb \"%s\"; expected on of %q", verb, verbs)
-	}
-
-	return nil
-}
-
-func validateExportDuplicates(exports []*config.Export) error {
-	gvks := map[string]bool{}
-	for _, e := range exports {
-		k := fmt.Sprintf("%s|%s", e.APIVersion, e.Kind)
-		_, found := gvks[k]
-		if found {
-			return fmt.Errorf("duplicate export for APIVersion %s and %s Kind, only one export for each APIVersion+Kind is permitted", e.APIVersion, e.Kind)
-		}
-		gvks[k] = true
-	}
-
-	return nil
-}
-
-func validateImportDuplicates(imports []*config.Import) error {
-	gvks := map[string]bool{}
-	for _, e := range imports {
-		k := fmt.Sprintf("%s|%s", e.APIVersion, e.Kind)
-		_, found := gvks[k]
-		if found {
-			return fmt.Errorf("duplicate import for APIVersion %s and %s Kind, only one import for each APIVersion+Kind is permitted", e.APIVersion, e.Kind)
-		}
-		gvks[k] = true
-	}
-
 	return nil
 }
 
@@ -650,11 +497,6 @@ func validateWildcardOrAny(values []string) error {
 	return nil
 }
 
-func isUsingOldGenericSync(genericSync config.ExperimentalGenericSync) bool {
-	return len(genericSync.Exports) > 0 || len(genericSync.Imports) > 0 ||
-		(genericSync.Hooks != nil && (len(genericSync.Hooks.HostToVirtual) > 0 || len(genericSync.Hooks.VirtualToHost) > 0))
-}
-
 func validateFromHostSyncMappings(s config.EnableSwitchWithResourcesMappings, resourceNamePlural string) error {
 	if !s.Enabled {
 		return nil
@@ -751,11 +593,6 @@ func validateFromHostSyncMappingObjectName(objRef []string, resourceNamePlural s
 	return nil
 }
 
-var (
-	errExportKubeConfigBothSecretAndAdditionalSecretsSet       = errors.New("exportKubeConfig.Secret and exportKubeConfig.AdditionalSecrets cannot be set at the same time")
-	errExportKubeConfigAdditionalSecretWithoutNameAndNamespace = errors.New("additional secret must have name and/or namespace set")
-)
-
 func validateExportKubeConfig(exportKubeConfig config.ExportKubeConfig) error {
 	// You cannot set both Secret and AdditionalSecrets at the same time.
 	if exportKubeConfig.Secret.IsSet() && len(exportKubeConfig.AdditionalSecrets) > 0 {
@@ -766,6 +603,21 @@ func validateExportKubeConfig(exportKubeConfig config.ExportKubeConfig) error {
 		if additionalSecret.Name == "" && additionalSecret.Namespace == "" {
 			return errExportKubeConfigAdditionalSecretWithoutNameAndNamespace
 		}
+	}
+
+	if err := validateExportKubeConfigServer(exportKubeConfig.Server); err != nil {
+		return errExportKubeConfigServerNotValid
+	}
+	return nil
+}
+
+func validateExportKubeConfigServer(server string) error {
+	if server == "" {
+		return nil
+	}
+	hasProto := strings.HasPrefix(server, "https://") || strings.HasPrefix(server, "http://")
+	if _, err := url.Parse(server); err != nil || !hasProto {
+		return errExportKubeConfigServerNotValid
 	}
 	return nil
 }
@@ -839,9 +691,9 @@ func validateExternalSecretsEnabled(
 	}
 	for crdName, crdConfig := range toHostCustomResources {
 		if crdConfig.Enabled &&
-			(crdName == "externalsecrets.external-secrets.io" && externalSecretsIntegration.Sync.ExternalSecrets.Enabled ||
-				crdName == "secretstores.external-secrets.io" && externalSecretsIntegration.Sync.Stores.Enabled ||
-				crdName == "clustersecretstores.external-secrets.io" && externalSecretsIntegration.Sync.ClusterStores.Enabled) {
+			(crdName == "externalsecrets.external-secrets.io" && externalSecretsIntegration.Enabled ||
+				crdName == "secretstores.external-secrets.io" && externalSecretsIntegration.Sync.ToHost.Stores.Enabled ||
+				crdName == "clustersecretstores.external-secrets.io" && externalSecretsIntegration.Sync.FromHost.ClusterStores.Enabled) {
 			return fmt.Errorf("external-secrets integration is enabled but external-secrets custom resource (%s) is also set in the sync.toHost.customResources. "+
 				"This is not supported, please remove the entry from sync.toHost.customResources", crdName)
 		}
@@ -923,14 +775,178 @@ func validatePrivatedNodesMode(vConfig *VirtualClusterConfig) error {
 		return fmt.Errorf("multi-namespace mode is not supported in private nodes mode")
 	}
 
-	// isolated control plane is not supported in dedicated mode
-	if vConfig.Experimental.IsolatedControlPlane.Enabled {
-		return fmt.Errorf("isolated control plane is not supported in private nodes mode")
+	// validate node pools
+	nodePoolNames := make(map[string]bool)
+	nodePoolProviders := make(map[string]bool)
+	for _, nodeProviderConfiguration := range vConfig.PrivateNodes.AutoNodes {
+		if nodeProviderConfiguration.Provider == "" {
+			return fmt.Errorf("node pool provider is required")
+		}
+
+		if nodePoolProviders[nodeProviderConfiguration.Provider] {
+			return fmt.Errorf("node pool provider %s is already used. You cannot have two configurations for the same provider", nodeProviderConfiguration.Provider)
+		}
+		nodePoolProviders[nodeProviderConfiguration.Provider] = true
+
+		for _, staticNodePool := range nodeProviderConfiguration.Static {
+			if staticNodePool.Name == "" {
+				return fmt.Errorf("node pool name is required")
+			}
+			if staticNodePool.Quantity < 0 {
+				return fmt.Errorf("node pool quantity cannot be negative")
+			}
+			if nodePoolNames[staticNodePool.Name] {
+				return fmt.Errorf("node pool name %s is already used. You cannot have two node pools with the same name", staticNodePool.Name)
+			}
+			nodePoolNames[staticNodePool.Name] = true
+
+			if err := validateRequirements(staticNodePool.NodeTypeSelector); err != nil {
+				return fmt.Errorf("invalid requirements for node pool %s: %w", staticNodePool.Name, err)
+			}
+		}
+		for _, dynamicNodePool := range nodeProviderConfiguration.Dynamic {
+			if dynamicNodePool.Name == "" {
+				return fmt.Errorf("node pool name is required")
+			}
+			if nodePoolNames[dynamicNodePool.Name] {
+				return fmt.Errorf("node pool name %s is already used. You cannot have two node pools with the same name", dynamicNodePool.Name)
+			}
+			nodePoolNames[dynamicNodePool.Name] = true
+
+			if err := validateRequirements(dynamicNodePool.NodeTypeSelector); err != nil {
+				return fmt.Errorf("invalid requirements for node pool %s: %w", dynamicNodePool.Name, err)
+			}
+		}
 	}
 
-	// dedicated mode is only supported for kubernetes distro
-	if vConfig.Distro() != config.K8SDistro {
-		return fmt.Errorf("private nodes mode is only supported for kubernetes")
+	// validate auto upgrade security context configs
+	if len(vConfig.PrivateNodes.AutoUpgrade.PodSecurityContext) > 0 {
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(vConfig.PrivateNodes.AutoUpgrade.PodSecurityContext, &corev1.PodSecurityContext{}); err != nil {
+			return fmt.Errorf("invalid privateNodes.autoUpgrade.podSecurityContext: %w", err)
+		}
+	}
+	if len(vConfig.PrivateNodes.AutoUpgrade.ContainerSecurityContext) > 0 {
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(vConfig.PrivateNodes.AutoUpgrade.ContainerSecurityContext, &corev1.SecurityContext{}); err != nil {
+			return fmt.Errorf("invalid privateNodes.autoUpgrade.containerSecurityContext: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func ValidateVolumeSnapshotController(volumeSnapshotController config.VolumeSnapshotController, privateNodes config.PrivateNodes) error {
+	if volumeSnapshotController.Enabled && !privateNodes.Enabled {
+		return fmt.Errorf("volume snapshot-controller is only supported with private nodes")
+	}
+	return nil
+}
+
+var allowedOperators = []string{"", "In", "NotIn", "Exists", "DoesNotExist", "Gt", "Lt"}
+
+func validateRequirements(requirements []config.Requirement) error {
+	for _, requirement := range requirements {
+		if requirement.Property == "" {
+			return fmt.Errorf("requirement property is required")
+		}
+
+		if !slices.Contains(allowedOperators, requirement.Operator) {
+			return fmt.Errorf("invalid operator %s for property %s, allowed operators are: %s", requirement.Operator, requirement.Property, strings.Join(allowedOperators, ", "))
+		}
+
+		if requirement.Value != "" && len(requirement.Values) > 0 {
+			return fmt.Errorf("requirement value and values cannot be set at the same time")
+		}
+
+		if requirement.Operator == "" || requirement.Operator == "In" || requirement.Operator == "NotIn" {
+			if requirement.Value == "" && len(requirement.Values) == 0 {
+				return fmt.Errorf("requirement value or values is required if operator is empty, In or NotIn")
+			}
+		}
+
+		if requirement.Operator == "Exists" || requirement.Operator == "DoesNotExist" {
+			if requirement.Value != "" || len(requirement.Values) > 0 {
+				return fmt.Errorf("value or values is not allowed for operator %s", requirement.Operator)
+			}
+		}
+
+		if requirement.Operator == "Gt" || requirement.Operator == "Lt" {
+			if requirement.Value == "" && len(requirement.Values) == 0 {
+				return fmt.Errorf("value or values is required for operator %s", requirement.Operator)
+			}
+		}
+	}
+
+	return nil
+}
+
+func validateAdvancedControlPlaneConfig(controlPlaneAdvanced config.ControlPlaneAdvanced) error {
+	if controlPlaneAdvanced.PodDisruptionBudget.Enabled &&
+		controlPlaneAdvanced.PodDisruptionBudget.MaxUnavailable != nil &&
+		controlPlaneAdvanced.PodDisruptionBudget.MinAvailable != nil {
+		return fmt.Errorf("minAvailable and maxUnavailable cannot be used together in a podDisruptionBudget")
+	}
+
+	return nil
+}
+
+func ValidateCustomResourceSyncProxyConflicts(toHostCustomResources map[string]config.SyncToHostCustomResource, fromHostCustomResources map[string]config.SyncFromHostCustomResource, proxyCustomResources map[string]config.CustomResourceProxy) error {
+	// Only consider enabled resources for conflict detection
+	enabledToHost := lo.Keys(lo.PickBy(toHostCustomResources, func(_ string, v config.SyncToHostCustomResource) bool { return v.Enabled }))
+	enabledFromHost := lo.Keys(lo.PickBy(fromHostCustomResources, func(_ string, v config.SyncFromHostCustomResource) bool { return v.Enabled }))
+	enabledProxy := lo.Keys(lo.PickBy(proxyCustomResources, func(_ string, v config.CustomResourceProxy) bool { return v.Enabled }))
+
+	// Check exact key conflicts between toHost and fromHost
+	if k := lo.Intersect(enabledToHost, enabledFromHost); len(k) > 0 {
+		return fmt.Errorf("custom resource %s exists in sync.toHost.customResources and sync.fromHost.customResources. Syncing is only supported one way", k[0])
+	}
+
+	proxyGroups := lo.SliceToMap(enabledProxy, func(key string) (string, string) {
+		return extractGroup(key), key
+	})
+	toHostGroups := lo.SliceToMap(enabledToHost, func(key string) (string, string) {
+		return extractGroup(key), key
+	})
+	fromHostGroups := lo.SliceToMap(enabledFromHost, func(key string) (string, string) {
+		return extractGroup(key), key
+	})
+
+	// Check toHost groups against proxy groups
+	if conflicting := lo.Intersect(lo.Keys(toHostGroups), lo.Keys(proxyGroups)); len(conflicting) > 0 {
+		group := conflicting[0]
+		return fmt.Errorf("custom resource group %q is used in both sync.toHost.customResources (%s) and proxy.customResources (%s). Resources from the same group cannot be used in both sync and proxy", group, toHostGroups[group], proxyGroups[group])
+	}
+
+	// Check fromHost groups against proxy groups
+	if conflicting := lo.Intersect(lo.Keys(fromHostGroups), lo.Keys(proxyGroups)); len(conflicting) > 0 {
+		group := conflicting[0]
+		return fmt.Errorf("custom resource group %q is used in both sync.fromHost.customResources (%s) and proxy.customResources (%s). Resources from the same group cannot be used in both sync and proxy", group, fromHostGroups[group], proxyGroups[group])
+	}
+
+	return nil
+}
+
+func extractGroup(key string) string {
+	// Split by "/" to separate version if present, then parse resource.group
+	parts := strings.SplitN(key, "/", 2)
+	gr := schema.ParseGroupResource(parts[0])
+	return gr.Group
+}
+
+func ValidateExperimentalProxyCustomResourcesConfig(cfg map[string]config.CustomResourceProxy) error {
+	for resourcePath, resourceConfig := range cfg {
+		basePath := fmt.Sprintf("experimental.proxy.customResources['%s']", resourcePath)
+
+		parts := strings.Split(resourcePath, "/")
+		if len(parts) != 2 || schema.ParseGroupResource(parts[0]).Resource == "" {
+			return fmt.Errorf("%s: invalid resource path %q, expected format 'resource.group/version' (e.g., 'resource.my-org.com/v1')", basePath, resourcePath)
+		}
+		if resourceConfig.TargetVirtualCluster.Name == "" {
+			return fmt.Errorf("%s.targetVirtualCluster is required", basePath)
+		}
+
+		if resourceConfig.AccessResources != "" && resourceConfig.AccessResources != config.AccessResourcesModeOwned && resourceConfig.AccessResources != config.AccessResourcesModeAll {
+			return fmt.Errorf("%s.accessResources: invalid value %q, must be 'owned' or 'all'", basePath, resourceConfig.AccessResources)
+		}
 	}
 
 	return nil

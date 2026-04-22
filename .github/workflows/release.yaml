@@ -5,14 +5,34 @@ on:
     types: [created]
 
 jobs:
+  check_minimum_version_tag:
+    if: github.repository_owner == 'loft-sh'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        if: ${{ !contains(github.event.release.tag_name, '-') }}
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - name: Validate MinimumVersionTag is stable
+        if: ${{ !contains(github.event.release.tag_name, '-') }}
+        run: |
+          MINIMUM_VERSION_TAG=$(grep -oP 'MinimumVersionTag\s*=\s*"\Kv[^"]+' pkg/platform/version.go)
+          if [[ ! "$MINIMUM_VERSION_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: MinimumVersionTag ('$MINIMUM_VERSION_TAG') must be a stable release version (e.g. v4.7.0), not a pre-release"
+            exit 1
+          fi
+          echo "MinimumVersionTag=$MINIMUM_VERSION_TAG is a stable version"
+
   publish:
     if: startsWith(github.ref, 'refs/tags/v') == true
+    needs: [check_minimum_version_tag]
     name: Publish vcluster
-    runs-on: ubuntu-22.04
+    runs-on: large-8_32
 
     outputs:
       release_version: ${{ steps.get_version.outputs.release_version }}
       previous_tag: ${{ steps.get_version.outputs.previous_tag }}
+      semver_parsed: ${{ steps.semver.outputs.parsed_version }}
 
     permissions:
       id-token: write # This is the key for OIDC cosign!
@@ -20,12 +40,16 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - run: git fetch --force --tags
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           cache: false
           go-version-file: go.mod
@@ -36,7 +60,7 @@ jobs:
         with:
           cosign-release: "v2.2.3"
       - name: Setup Syft
-        uses: anchore/sbom-action/download-syft@v0.20.0
+        uses: anchore/sbom-action/download-syft@v0.22.2
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
@@ -46,9 +70,51 @@ jobs:
           version: "v3.0.2"
       - id: get_version
         run: |
-          RELEASE_VERSION=$(echo $GITHUB_REF | sed -nE 's!refs/tags/!!p')
+          RELEASE_VERSION=$(echo "$GITHUB_REF" | sed -nE 's!refs/tags/!!p')
           echo "release_version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
-          echo "previous_tag=$(git describe --abbrev=0 --tags $(git rev-list --tags --skip=1 --max-count=1))" >> "$GITHUB_OUTPUT"
+          echo "previous_tag=$(git describe --abbrev=0 --tags "$(git rev-list --tags --skip=1 --max-count=1)")" >> "$GITHUB_OUTPUT"
+      - name: Validate semver
+        id: semver
+        uses: loft-sh/github-actions/.github/actions/semver-validation@semver-validation/v1
+        with:
+          version: ${{ steps.get_version.outputs.release_version }}
+      - name: Check if release would downgrade homebrew tap
+        id: check_latest_stable
+        run: |
+          CURRENT_TAG="${{ steps.get_version.outputs.release_version }}"
+          # Only check stable releases. Pre-releases are handled by
+          # goreleaser's skip_upload: auto in .goreleaser.yaml.
+          if [[ "$CURRENT_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            # Fetch the current version from the homebrew tap formula with
+            # retry + exponential backoff. If we can't verify the tap version
+            # we must fail — otherwise an older release could silently overwrite
+            # the latest version in the tap.
+            TAP_VERSION=""
+            for attempt in 1 2 3; do
+              TAP_VERSION=$(curl -sfL --max-time 10 \
+                "https://raw.githubusercontent.com/loft-sh/homebrew-tap/main/Formula/vcluster.rb" \
+                | grep -oP 'version "\K[^"]+') && break
+              TAP_VERSION=""
+              delay=$((1 << attempt))  # 2, 4, 8 seconds
+              echo "::warning::Attempt $attempt/3 to fetch tap version failed, retrying in ${delay}s..."
+              sleep "$delay"
+            done
+
+            if [ -z "$TAP_VERSION" ]; then
+              echo "::error::Failed to fetch homebrew tap version after 3 attempts. Failing to prevent potential tap downgrade."
+              exit 1
+            fi
+
+            CURRENT_VERSION="${CURRENT_TAG#v}"
+            if [ "$(printf '%s\n' "$CURRENT_VERSION" "$TAP_VERSION" | sort -V | tail -1)" != "$CURRENT_VERSION" ]; then
+              echo "skip_homebrew=true" >> "$GITHUB_OUTPUT"
+              echo "::notice::Skipping Homebrew upload: $CURRENT_TAG would downgrade tap from v$TAP_VERSION"
+            else
+              echo "skip_homebrew=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "skip_homebrew=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Login to DockerHub
         uses: docker/login-action@v3
         with:
@@ -62,7 +128,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: "goreleaser/goreleaser-action@v6"
         with:
-          args: release --clean --timeout 60m
+          args: release --clean --timeout 60m ${{ steps.check_latest_stable.outputs.skip_homebrew == 'true' && '--skip=homebrew' || '' }}
           version: "~> v2"
         env:
           GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
@@ -70,7 +136,7 @@ jobs:
           GORELEASER_CURRENT_TAG: ${{ steps.get_version.outputs.release_version }}
           GORELEASER_PREVIOUS_TAG: ${{ steps.get_version.outputs.previous_tag }}
       - name: Save release assets
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: release-assets
           path: release/
@@ -81,7 +147,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Trigger cli-docs workflow
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         continue-on-error: true
         with:
           github-token: ${{ secrets.GH_ACCESS_TOKEN }}
@@ -103,112 +169,77 @@ jobs:
   publish-chart:
     if: startsWith(github.ref, 'refs/tags/v') == true
     needs: [publish]
-    runs-on: ubuntu-22.04
-
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
     steps:
-      - name: Check out code
-        uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - name: Validate semantic version
+        id: semver
+        uses: loft-sh/github-actions/.github/actions/semver-validation@semver-validation/v1
         with:
-          version: "v3.0.2"
-      - run: |
-          RELEASE_VERSION=$(echo $GITHUB_REF | sed -nE 's!refs/tags/v!!p')
-          helm plugin install https://github.com/chartmuseum/helm-push.git
-          helm repo add chartmuseum $CHART_MUSEUM_URL --username $CHART_MUSEUM_USER --password $CHART_MUSEUM_PASSWORD
-          helm cm-push --force --version="$RELEASE_VERSION" --app-version="$RELEASE_VERSION" chart chartmuseum
+          version: ${{ needs.publish.outputs.release_version }}
+      - name: Check validation result
         env:
-          CHART_MUSEUM_URL: "https://charts.loft.sh/"
-          CHART_MUSEUM_USER: ${{ secrets.CHART_MUSEUM_USER }}
-          CHART_MUSEUM_PASSWORD: ${{ secrets.CHART_MUSEUM_PASSWORD }}
+          IS_VALID: ${{ steps.semver.outputs.is_valid }}
+          VERSION: ${{ needs.publish.outputs.release_version }}
+        run: |
+          if [ "$IS_VALID" != "true" ]; then
+            echo "Invalid version: $VERSION"
+            exit 1
+          fi
+      - name: Compute chart version (strip v prefix)
+        id: chart-version
+        env:
+          VERSION: ${{ needs.publish.outputs.release_version }}
+        run: echo "version=${VERSION#v}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+      - name: Publish chart
+        uses: loft-sh/github-actions/.github/actions/publish-helm-chart@publish-helm-chart/v1
+        with:
+          chart-name: vcluster
+          chart-versions: '["${{ steps.chart-version.outputs.version }}"]'
+          app-version: ${{ steps.chart-version.outputs.version }}
+          chart-museum-user: ${{ secrets.CHART_MUSEUM_USER }}
+          chart-museum-password: ${{ secrets.CHART_MUSEUM_PASSWORD }}
+
   # The workflow will only trigger on non-draft releases
   # https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows#release
   sync_linear:
+    if: ${{ !contains(needs.publish.outputs.semver_parsed, '-next') }}
     needs:
       - publish
       - publish-chart
+    name: Sync Linear Issues
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Sync Linear issues to Released
+        uses: loft-sh/github-actions/.github/actions/linear-release-sync@0eaac503dce88c81646e6798c981bffa3927d83c # linear-release-sync/v1
         with:
-          go-version-file: go.mod
-      - name: Update linear issues
-        run: go run . -release-tag="${{ needs.publish.outputs.release_version }}"
-        working-directory: hack/linear-sync
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
-          LINEAR_TOKEN: ${{ secrets.LINEAR_TOKEN }}
+          release-tag: ${{ needs.publish.outputs.release_version }}
+          repo-name: vcluster
+          github-token: ${{ secrets.GH_ACCESS_TOKEN }}
+          linear-token: ${{ secrets.LINEAR_TOKEN }}
 
-  notify_release:
+  notify_failure:
+    if: ${{ always() && contains(needs.*.result, 'failure') && github.repository_owner == 'loft-sh' }}
     needs:
+      - check_minimum_version_tag
       - publish
       - publish-chart
       - sync_linear
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - id: get_base_branch
-        name: Get base branch for tag
-        run: |
-          RELEASE_VERSION=${{ needs.publish.outputs.release_version }}
-          TAG_COMMIT=$(git rev-list -n 1 "$RELEASE_VERSION")
-
-          # Find all remote branches containing this commit
-          REMOTE_BRANCHES=$(git branch -r --contains "$TAG_COMMIT" | grep -v HEAD | sed -e 's/^[[:space:]]*//' -e 's/^origin\///')
-
-          if [ -z "$REMOTE_BRANCHES" ]; then
-            echo "No remote branches found containing this commit, falling back to 'main'"
-            BASE_BRANCH="main"
-          else
-            # Initialize variables for branch distance calculation
-            BEST_BRANCH="main"
-            BEST_DISTANCE=99999
-
-            # For each branch, calculate the distance from tag commit to branch tip
-            for REMOTE_BRANCH in $REMOTE_BRANCHES; do
-              # Skip if branch is empty
-              [ -z "$REMOTE_BRANCH" ] && continue
-
-              # Get the base of the branch (where it diverged from main)
-              BRANCH_BASE=$(git merge-base origin/main origin/$REMOTE_BRANCH 2>/dev/null || echo "")
-
-              if [ ! -z "$BRANCH_BASE" ]; then
-                # Check if our tag commit is directly in the branch history
-                if git merge-base --is-ancestor "$BRANCH_BASE" "$TAG_COMMIT" 2>/dev/null; then
-                  # Calculate how far our commit is from the branch tip
-                  DISTANCE=$(git rev-list --count "$TAG_COMMIT..origin/$REMOTE_BRANCH")
-
-                  echo "Branch $REMOTE_BRANCH - Distance from branch tip: $DISTANCE"
-
-                  # If this is the closest branch so far, update our best match
-                  if [ "$DISTANCE" -lt "$BEST_DISTANCE" ]; then
-                    BEST_BRANCH=$REMOTE_BRANCH
-                    BEST_DISTANCE=$DISTANCE
-                  fi
-                fi
-              fi
-            done
-
-            # If we failed to find a branch with our algorithm, fall back to alphabetical order
-            if [ "$BEST_DISTANCE" -eq 99999 ]; then
-              echo "No suitable branch found with distance algorithm, falling back to alphabetical order"
-              BEST_BRANCH=$(echo "$REMOTE_BRANCHES" | head -n 1 || echo "main")
-            fi
-
-            BASE_BRANCH=$BEST_BRANCH
-          fi
-
-          echo "base_branch=$BASE_BRANCH" >> "$GITHUB_OUTPUT"
-          echo "Base branch for $RELEASE_VERSION: $BASE_BRANCH (distance: $BEST_DISTANCE)"
-      - name: Notify \#product-releases Slack channel
-        uses: loft-sh/github-actions/.github/actions/release-notification@v1
-        with:
-          version: ${{ needs.publish.outputs.release_version }}
-          previous_tag: ${{ needs.publish.outputs.previous_tag }}
-          changes: 'See changelog link below'
-          target_repo: 'loft-sh/vcluster'
-          product: 'vCluster'
-          base_branch: ${{ steps.get_base_branch.outputs.base_branch }}
-          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL_PRODUCT_RELEASES }}
+    permissions:
+      contents: read
+    uses: loft-sh/github-actions/.github/workflows/notify-release.yaml@55d5b751b3c096231e7fc1e291c152a3d2449b9c # release-notification/v2
+    with:
+      release_version: ${{ github.event.release.tag_name }}
+      target_repo: ${{ github.repository }}
+      product: vCluster
+      status: failure
+    secrets:
+      SLACK_WEBHOOK_URL_PRODUCT_RELEASES: ${{ secrets.SLACK_WEBHOOK_URL_PRODUCT_RELEASES }}

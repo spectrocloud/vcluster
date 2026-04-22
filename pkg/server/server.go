@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/loft-sh/vcluster/pkg/authentication/delegatingauthenticator"
@@ -16,6 +17,7 @@ import (
 	"github.com/loft-sh/vcluster/pkg/authorization/impersonationauthorizer"
 	"github.com/loft-sh/vcluster/pkg/authorization/kubeletauthorizer"
 	"github.com/loft-sh/vcluster/pkg/plugin"
+	"github.com/loft-sh/vcluster/pkg/pro"
 	"github.com/loft-sh/vcluster/pkg/server/cert"
 	"github.com/loft-sh/vcluster/pkg/server/filters"
 	"github.com/loft-sh/vcluster/pkg/server/handler"
@@ -25,6 +27,7 @@ import (
 	"github.com/loft-sh/vcluster/pkg/util/serverhelper"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/admission"
@@ -37,6 +40,7 @@ import (
 	"k8s.io/apiserver/pkg/authorization/union"
 	"k8s.io/apiserver/pkg/endpoints/filterlatency"
 	genericapifilters "k8s.io/apiserver/pkg/endpoints/filters"
+	genericapiimpersonification "k8s.io/apiserver/pkg/endpoints/filters/impersonation"
 	"k8s.io/apiserver/pkg/endpoints/request"
 	genericfeatures "k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/server"
@@ -137,10 +141,10 @@ func NewServer(ctx *synccontext.ControllerContext) (*Server, error) {
 
 	// add filters if not dedicated
 	if !ctx.Config.PrivateNodes.Enabled {
-		localConfig := ctx.LocalManager.GetConfig()
+		localConfig := ctx.HostManager.GetConfig()
 		uncachedLocalClient, err := client.New(localConfig, client.Options{
-			Scheme: ctx.LocalManager.GetScheme(),
-			Mapper: ctx.LocalManager.GetRESTMapper(),
+			Scheme: ctx.HostManager.GetScheme(),
+			Mapper: ctx.HostManager.GetRESTMapper(),
 		})
 		if err != nil {
 			return nil, err
@@ -157,7 +161,6 @@ func NewServer(ctx *synccontext.ControllerContext) (*Server, error) {
 			h = filters.WithNodeChanges(ctx, h, uncachedLocalClient, uncachedVirtualClient, virtualConfig)
 		}
 		h = filters.WithFakeKubelet(h, ctx.ToRegisterContext())
-		h = filters.WithK3sConnect(h)
 
 		if ctx.Config.Sync.ToHost.Pods.HybridScheduling.Enabled {
 			h = filters.WithPodSchedulerCheck(h, ctx.ToRegisterContext(), ctx.VirtualManager.GetClient())
@@ -185,10 +188,18 @@ func (s *Server) ServeOnListenerTLS(ctx *synccontext.ControllerContext) error {
 		APIPrefixes:          sets.NewString("api", "apis"),
 		GrouplessAPIPrefixes: sets.NewString("api"),
 	}
-	serverConfig.LongRunningFunc = genericfilters.BasicLongRunningRequestCheck(
-		sets.NewString("watch", "proxy"),
-		sets.NewString("attach", "exec", "proxy", "log", "portforward"),
-	)
+	serverConfig.LongRunningFunc = func(r *http.Request, requestInfo *request.RequestInfo) bool {
+		// internal registry requests are long running
+		if !requestInfo.IsResourceRequest && strings.HasPrefix(requestInfo.Path, "/v2") {
+			return true
+		}
+
+		// use the default long running check
+		return genericfilters.BasicLongRunningRequestCheck(
+			sets.NewString("watch", "proxy"),
+			sets.NewString("attach", "exec", "proxy", "log", "portforward"),
+		)(r, requestInfo)
+	}
 
 	redirectAuthResources := []delegatingauthorizer.GroupVersionResourceVerb{
 		{
@@ -197,10 +208,60 @@ func (s *Server) ServeOnListenerTLS(ctx *synccontext.ControllerContext) error {
 			SubResource:          "",
 		},
 	}
+	redirectAuthNonResources := []delegatingauthorizer.PathVerb{}
 	redirectAuthResources = append(redirectAuthResources, s.redirectResources...)
+	if ctx.Config.Integrations.MetricsServer.Enabled {
+		redirectAuthResources = append(redirectAuthResources,
+			delegatingauthorizer.GroupVersionResourceVerb{
+				GroupVersionResource: schema.GroupVersionResource{
+					Group:    "metrics.k8s.io",
+					Version:  "*",
+					Resource: "*",
+				},
+				Verb:        "*",
+				SubResource: "*",
+			},
+		)
+	}
+	if ctx.Config.Integrations.KubeVirt.Enabled {
+		redirectAuthResources = append(redirectAuthResources,
+			delegatingauthorizer.GroupVersionResourceVerb{
+				GroupVersionResource: schema.GroupVersionResource{
+					Group:    "subresources.kubevirt.io",
+					Version:  "*",
+					Resource: "*",
+				},
+				Verb:        "*",
+				SubResource: "*",
+			},
+		)
+	}
+	if ctx.Config.ControlPlane.Advanced.Registry.Enabled || ctx.Config.IsDockerRegistryDaemonEnabled() {
+		if !ctx.Config.ControlPlane.Advanced.Registry.AnonymousPull {
+			redirectAuthNonResources = append(redirectAuthNonResources,
+				delegatingauthorizer.PathVerb{
+					Path: "/v2*",
+					Verb: "*",
+				},
+			)
+		} else {
+			redirectAuthNonResources = append(redirectAuthNonResources,
+				delegatingauthorizer.PathVerb{
+					Path: "/v2*",
+					Verb: "!head,get",
+				},
+			)
+		}
+	}
+	redirectAuthNonResources = append(redirectAuthNonResources,
+		delegatingauthorizer.PathVerb{
+			Path: "/vcluster/features",
+			Verb: "*",
+		},
+	)
 	serverConfig.Authorization.Authorizer = union.New(
 		kubeletauthorizer.New(s.uncachedVirtualClient),
-		delegatingauthorizer.New(s.uncachedVirtualClient, redirectAuthResources, nil),
+		delegatingauthorizer.New(s.uncachedVirtualClient, redirectAuthResources, redirectAuthNonResources),
 		impersonationauthorizer.New(s.uncachedVirtualClient),
 		allowall.New(),
 	)
@@ -249,7 +310,9 @@ func (s *Server) ServeOnListenerTLS(ctx *synccontext.ControllerContext) error {
 func (s *Server) buildHandlerChain(ctx *synccontext.ControllerContext, serverConfig *server.Config) http.Handler {
 	defaultHandler := DefaultBuildHandlerChain(s.handler, serverConfig)
 	if !ctx.Config.PrivateNodes.Enabled {
-		defaultHandler = filters.WithNodeName(defaultHandler, ctx.Config.WorkloadNamespace, ctx.Config.Networking.Advanced.ProxyKubelets.ByIP, s.cachedVirtualClient, ctx.WorkloadNamespaceClient)
+		defaultHandler = filters.WithNodeName(defaultHandler, ctx.Config.HostNamespace, ctx.Config.Networking.Advanced.ProxyKubelets.ByIP, s.cachedVirtualClient, ctx.HostNamespaceClient)
+	} else if ctx.Config.ControlPlane.Advanced.Konnectivity.Server.Enabled {
+		defaultHandler = pro.WithKonnectivity(ctx, defaultHandler)
 	}
 	return defaultHandler
 }
@@ -275,7 +338,7 @@ func DefaultBuildHandlerChain(apiHandler http.Handler, c *server.Config) http.Ha
 	}
 
 	handler = filterlatency.TrackCompleted(handler)
-	handler = genericapifilters.WithImpersonation(handler, c.Authorization.Authorizer, c.Serializer)
+	handler = genericapiimpersonification.WithImpersonation(handler, c.Authorization.Authorizer, c.Serializer)
 	// @matskiv: save the user.Info object before impersonation which might override it
 	handler = WithOriginalUser(handler)
 	handler = filterlatency.TrackStarted(handler, c.TracerProvider, "impersonation")
@@ -336,7 +399,7 @@ func DefaultBuildHandlerChain(apiHandler http.Handler, c *server.Config) http.Ha
 	// Original line:
 	// handler = genericapifilters.WithMuxAndDiscoveryComplete(handler, c.lifecycleSignals.MuxAndDiscoveryComplete.Signaled())
 	handler = genericapifilters.WithMuxAndDiscoveryComplete(handler, make(chan struct{}))
-	handler = genericfilters.WithPanicRecovery(handler, c.RequestInfoResolver)
+	handler = filters.WithPanicRecovery(handler, c.RequestInfoResolver)
 	handler = genericapifilters.WithAuditInit(handler)
 	return handler
 }
@@ -379,7 +442,15 @@ func initAdmission(ctx context.Context, vConfig *rest.Config) (admission.Interfa
 		&emptyConfigProvider{},
 		admission.PluginInitializers{
 			webhookinit.NewPluginInitializer(authInfoResolverWrapper, serviceResolver),
-			initializer.New(vClient, nil, kubeInformerFactory, nil, nil, nil, nil),
+			initializer.New(vClient,
+				nil,
+				kubeInformerFactory,
+				nil,
+				nil,
+				nil,
+				nil,
+				nil,
+			),
 		},
 		nil,
 	)

@@ -248,7 +248,7 @@ func (s *persistentVolumeSyncer) Sync(ctx *synccontext.SyncContext, event *syncc
 	// update host object
 	if event.Virtual.Annotations[constants.HostClusterPersistentVolumeAnnotation] == "" {
 		// TODO: translate the storage secrets
-		event.Host.Spec.StorageClassName = mappings.VirtualToHostName(ctx, event.Virtual.Spec.StorageClassName, "", mappings.StorageClasses())
+		event.Host.Spec.StorageClassName = translate.Default.HostNameCluster(event.Virtual.Spec.StorageClassName)
 	}
 
 	// bi-directional sync of annotations and labels
@@ -309,6 +309,9 @@ func (s *persistentVolumeSyncer) shouldSync(ctx *synccontext.SyncContext, pObj *
 		} else if translate.Default.IsManaged(ctx, pObj) {
 			return true, nil, nil
 		}
+		if translate.Default.IsTargetedNamespace(ctx, pObj.Spec.ClaimRef.Namespace) && pObj.Status.Phase == corev1.VolumeReleased {
+			return true, nil, nil
+		}
 
 		return translate.Default.IsTargetedNamespace(ctx, pObj.Spec.ClaimRef.Namespace) && pObj.Spec.PersistentVolumeReclaimPolicy == corev1.PersistentVolumeReclaimRetain, nil, nil
 	}
@@ -331,23 +334,54 @@ func (s *persistentVolumeSyncer) IsManaged(ctx *synccontext.SyncContext, pObj cl
 }
 
 func (s *persistentVolumeSyncer) applyLimitByClass(ctx *synccontext.SyncContext, virtual *corev1.PersistentVolume) bool {
-	// Get the host storage class and check if it matches the selector
-	if ctx.Config.Sync.FromHost.StorageClasses.Enabled.Bool() && virtual.Spec.StorageClassName != "" {
-		pStorageClass := &storagev1.StorageClass{}
-		err := ctx.PhysicalClient.Get(ctx.Context, types.NamespacedName{Name: virtual.Spec.StorageClassName}, pStorageClass)
-		if err != nil || pStorageClass.GetDeletionTimestamp() != nil {
-			s.EventRecorder().Eventf(virtual, "Warning", "SyncWarning", "did not sync persistent volume %q to host because the storage class %q couldn't be reached in the host: %s", virtual.GetName(), virtual.Spec.StorageClassName, err)
-			return true
-		}
-		matches, err := ctx.Config.Sync.FromHost.StorageClasses.Selector.Matches(pStorageClass)
-		if err != nil {
-			s.EventRecorder().Eventf(virtual, "Warning", "SyncWarning", "did not sync persistent volume %q to host because the storage class %q in the host could not be checked against the selector under 'sync.fromHost.storageClasses.selector': %s", virtual.GetName(), pStorageClass.GetName(), err)
-			return true
-		}
-		if !matches {
-			s.EventRecorder().Eventf(virtual, "Warning", "SyncWarning", "did not sync persistent volume %q to host because the storage class %q in the host does not match the selector under 'sync.fromHost.storageClasses.selector'", virtual.GetName(), pStorageClass.GetName())
-			return true
-		}
+	if !ctx.Config.Sync.FromHost.StorageClasses.Enabled.Bool() ||
+		ctx.Config.Sync.FromHost.StorageClasses.Selector.Empty() ||
+		virtual.Spec.StorageClassName == "" {
+		return false
+	}
+
+	pStorageClass := &storagev1.StorageClass{}
+	err := ctx.HostClient.Get(ctx.Context, types.NamespacedName{Name: virtual.Spec.StorageClassName}, pStorageClass)
+	if err != nil || pStorageClass.GetDeletionTimestamp() != nil {
+		s.EventRecorder().Eventf(
+			virtual,
+			nil,
+			"Warning",
+			"SyncWarning",
+			fmt.Sprintf("Sync%s", virtual.GetObjectKind().GroupVersionKind().Kind),
+			"did not sync persistent volume %q to host because the storage class %q couldn't be reached in the host: %s",
+			virtual.GetName(),
+			virtual.Spec.StorageClassName,
+			err)
+		return true
+	}
+	matches, err := ctx.Config.Sync.FromHost.StorageClasses.Selector.Matches(pStorageClass)
+	if err != nil {
+		s.EventRecorder().Eventf(
+			virtual,
+			nil,
+			"Warning",
+			"SyncWarning",
+			fmt.Sprintf("Sync%s", virtual.GetObjectKind().GroupVersionKind().Kind),
+			"did not sync persistent volume %q to host because the storage class %q in the host could not be checked against the selector under 'sync.fromHost.storageClasses.selector': %s",
+			virtual.GetName(),
+			pStorageClass.GetName(),
+			err,
+		)
+		return true
+	}
+	if !matches {
+		s.EventRecorder().Eventf(
+			virtual,
+			nil,
+			"Warning",
+			"SyncWarning",
+			fmt.Sprintf("Sync%s", virtual.GetObjectKind().GroupVersionKind().Kind),
+			"did not sync persistent volume %q to host because the storage class %q in the host does not match the selector under 'sync.fromHost.storageClasses.selector'",
+			virtual.GetName(),
+			pStorageClass.GetName(),
+		)
+		return true
 	}
 	return false
 }

@@ -1,8 +1,5 @@
-ARG KINE_VERSION="v0.13.14"
-FROM rancher/kine:${KINE_VERSION} AS kine
-
 # Build program
-FROM golang:1.24 AS builder
+FROM golang:1.25 AS builder
 
 WORKDIR /vcluster-dev
 ARG TARGETOS
@@ -19,9 +16,6 @@ RUN curl -s https://get.helm.sh/helm-${HELM_VERSION}-linux-${TARGETARCH}.tar.gz 
 
 # Install Delve for debugging
 RUN if [ "${TARGETARCH}" = "amd64" ] || [ "${TARGETARCH}" = "arm64" ]; then go install github.com/go-delve/delve/cmd/dlv@latest; fi
-
-# Install kine
-COPY --from=kine /bin/kine /usr/local/bin/kine
 
 # Copy the Go Modules manifests
 COPY go.mod go.mod
@@ -57,17 +51,15 @@ RUN --mount=type=cache,id=gomod,target=/go/pkg/mod \
 ENTRYPOINT ["go", "run", "-mod", "vendor", "cmd/vcluster/main.go", "start"]
 
 # we use alpine for easier debugging
-FROM alpine:3.22
+FROM alpine:3.23
 
 # install runtime dependencies
-RUN apk add --no-cache ca-certificates zstd tzdata
+RUN apk upgrade --no-cache zlib && apk add --no-cache ca-certificates zstd tzdata
 
 # Set root path as working directory
 WORKDIR /
 
-COPY --from=kine /bin/kine /usr/local/bin/kine
 COPY --from=builder /vcluster .
-COPY --from=builder /usr/local/bin/helm /usr/local/bin/helm
 
 # RUN useradd -u 12345 nonroot
 # USER nonroot

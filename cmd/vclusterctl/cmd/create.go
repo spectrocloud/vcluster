@@ -64,7 +64,7 @@ vcluster create test --namespace test
 		},
 	}
 
-	cobraCmd.Flags().StringVar(&cmd.Driver, "driver", "", "The driver to use for managing the virtual cluster, can be either helm or platform.")
+	cobraCmd.Flags().StringVar(&cmd.Driver, "driver", "", "The driver to use for managing the virtual cluster, can be either helm, platform, or docker.")
 
 	create.AddCommonFlags(cobraCmd, &cmd.CreateOptions)
 	create.AddHelmFlags(cobraCmd, &cmd.CreateOptions)
@@ -110,7 +110,21 @@ func (cmd *CreateCmd) Run(cobraCmd *cobra.Command, args []string) error {
 	}
 
 	if len(fs) > 0 {
-		cmd.log.Fatalf("Following platform flags have been set, which won't have any effect when using driver type %s: %s", config.HelmDriver, strings.Join(fs, ", "))
+		cmd.log.Fatalf("Following platform flags have been set, which won't have any effect when using driver type %s: %s", driver, strings.Join(fs, ", "))
+	}
+
+	// check if we should create a docker vCluster
+	if driver == config.DockerDriver {
+		if cmd.Restore != "" {
+			// Clear the default chart version so RestoreDocker uses the version
+			// from the snapshot metadata. If the user explicitly passed
+			// --chart-version, the flag will have been changed.
+			if !cobraCmd.Flag("chart-version").Changed {
+				cmd.ChartVersion = ""
+			}
+			return cli.RestoreDocker(ctx, cmd.GlobalFlags, cmd.Restore, args[0], &cmd.CreateOptions, cmd.log)
+		}
+		return cli.CreateDocker(ctx, &cmd.CreateOptions, cmd.GlobalFlags, args[0], cmd.log)
 	}
 
 	return cli.CreateHelm(ctx, &cmd.CreateOptions, cmd.GlobalFlags, args[0], cmd.log)

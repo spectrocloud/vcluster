@@ -9,12 +9,16 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/loft-sh/vcluster/pkg/config"
 	"github.com/loft-sh/vcluster/pkg/constants"
 	"github.com/loft-sh/vcluster/pkg/controllers/resources/nodes/nodeservice"
 	"github.com/loft-sh/vcluster/pkg/util/certhelper"
 	"github.com/loft-sh/vcluster/pkg/util/translate"
+	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -34,10 +38,14 @@ func GenAPIServerServingCerts(
 	currentCert,
 	currentKey []byte,
 ) ([]byte, []byte, []string, error) {
-	SANs, err := getExtraSANs(ctx, workloadNamespaceClient, vClient, vConfig)
+	sans, err := getExtraSANs(ctx, workloadNamespaceClient, vClient, vConfig)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("error getting extra sans: %w", err)
 	}
+
+	sans = lo.UniqBy(sans, func(s string) string {
+		return strings.ToLower(s)
+	})
 
 	regen := false
 	commonName := "kube-apiserver"
@@ -51,12 +59,20 @@ func GenAPIServerServingCerts(
 		"localhost",
 	}
 
+	// if konnectivity is enabled, we need to add the konnectivity service to the sans
+	if vConfig.PrivateNodes.Enabled && vConfig.ControlPlane.Advanced.Konnectivity.Server.Enabled {
+		dnsNames = append(dnsNames, "konnectivity")
+		dnsNames = append(dnsNames, "konnectivity.kube-system")
+		dnsNames = append(dnsNames, "konnectivity.kube-system.svc")
+		dnsNames = append(dnsNames, "konnectivity.kube-system.svc."+vConfig.Networking.Advanced.ClusterDomain)
+	}
+
 	altNames := &certhelper.AltNames{
 		DNSNames: dnsNames,
 		IPs:      []net.IP{net.ParseIP("127.0.0.1")},
 	}
 
-	addSANs(altNames, SANs)
+	addSANs(altNames, sans)
 
 	altNamesSlice := []string{}
 	for _, ip := range altNames.IPs {
@@ -67,6 +83,16 @@ func GenAPIServerServingCerts(
 	caBytes, err := os.ReadFile(caCertFile)
 	if err != nil {
 		return nil, nil, nil, err
+	}
+
+	caCert, err := certhelper.ParseCertsPEM(caBytes)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	// check if caCert is expired.
+	if time.Now().After(caCert[0].NotAfter) {
+		return nil, nil, nil, fmt.Errorf("expired CA certificate: %s", caCertFile)
 	}
 
 	pool := x509.NewCertPool()
@@ -97,11 +123,6 @@ func GenAPIServerServingCerts(
 		return nil, nil, nil, err
 	}
 
-	caCert, err := certhelper.ParseCertsPEM(caBytes)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
 	privateKey := currentKey
 	if regen || len(currentKey) == 0 {
 		privateKey, err = certhelper.MakeEllipticPrivateKeyPEM()
@@ -118,6 +139,7 @@ func GenAPIServerServingCerts(
 		CommonName: commonName,
 		AltNames:   *altNames,
 		Usages:     extKeyUsage,
+		Duration:   servingCertDuration(),
 	}
 	cert, err := certhelper.NewSignedCert(cfg, key.(crypto.Signer), caCert[0], caKey.(crypto.Signer))
 	if err != nil {
@@ -161,6 +183,11 @@ func getExtraSANs(ctx context.Context, workloadNamespaceClient, vClient client.C
 		}
 		retSANs = append(retSANs, svc.Spec.ClusterIP)
 
+		// get standalone endpoints via annotation
+		if svc.Annotations[constants.VClusterStandaloneEndpointsAnnotation] != "" {
+			retSANs = append(retSANs, strings.Split(svc.Annotations[constants.VClusterStandaloneEndpointsAnnotation], ",")...)
+		}
+
 		// get endpoint
 		clusterInfo := &corev1.ConfigMap{}
 		err = vClient.Get(ctx, types.NamespacedName{
@@ -194,18 +221,46 @@ func getExtraSANs(ctx context.Context, workloadNamespaceClient, vClient client.C
 	}
 
 	// add default sans
-	retSANs = append(retSANs, vConfig.WorkloadService, vConfig.WorkloadService+"."+vConfig.WorkloadNamespace, "*."+constants.NodeSuffix)
+	retSANs = append(retSANs, vConfig.Name, vConfig.Name+"."+vConfig.HostNamespace, "*."+constants.NodeSuffix)
 
 	// get cluster ip of target service
 	svc := &corev1.Service{}
 	err := workloadNamespaceClient.Get(ctx, types.NamespacedName{
-		Namespace: vConfig.WorkloadNamespace,
-		Name:      vConfig.WorkloadService,
+		Namespace: vConfig.HostNamespace,
+		Name:      vConfig.Name,
 	}, svc)
 	if err != nil {
-		return nil, fmt.Errorf("error getting vcluster service %s/%s: %w", vConfig.WorkloadNamespace, vConfig.WorkloadService, err)
+		return nil, fmt.Errorf("error getting vcluster service %s/%s: %w", vConfig.HostNamespace, vConfig.Name, err)
 	} else if svc.Spec.ClusterIP == "" {
-		return nil, fmt.Errorf("target service %s/%s is missing a clusterIP", vConfig.WorkloadNamespace, vConfig.WorkloadService)
+		return nil, fmt.Errorf("target service %s/%s is missing a clusterIP", vConfig.HostNamespace, vConfig.Name)
+	}
+
+	// append general hostnames
+	retSANs = append(
+		retSANs,
+		vConfig.Name,
+		vConfig.Name+"."+vConfig.HostNamespace,
+		"*."+translate.VClusterName+"."+vConfig.HostNamespace+"."+constants.NodeSuffix,
+	)
+
+	// if the service is a node port, we need to add the node ips to the sans
+	if svc.Spec.Type == corev1.ServiceTypeNodePort {
+		pods := &corev1.PodList{}
+		err = workloadNamespaceClient.List(ctx, pods, client.InNamespace(vConfig.HostNamespace), client.MatchingLabels{"app": "vcluster", "release": vConfig.Name})
+		if err != nil {
+			return nil, fmt.Errorf("error getting vcluster control plane pods: %w", err)
+		}
+		for _, pod := range pods.Items {
+			if len(pod.Status.HostIPs) > 0 {
+				for _, hostIP := range pod.Status.HostIPs {
+					if hostIP.IP == "" {
+						continue
+					}
+
+					retSANs = append(retSANs, hostIP.IP)
+				}
+			}
+		}
 	}
 
 	// add cluster ip
@@ -240,40 +295,10 @@ func getExtraSANs(ctx context.Context, workloadNamespaceClient, vClient client.C
 		retSANs = append(retSANs, podIP)
 	}
 
-	// get cluster ip of load balancer service
-	lbSVC := &corev1.Service{}
-	err = workloadNamespaceClient.Get(ctx, types.NamespacedName{
-		Namespace: vConfig.WorkloadNamespace,
-		Name:      vConfig.WorkloadService,
-	}, lbSVC)
-	// proceed only if load balancer service exists
-	if !kerrors.IsNotFound(err) {
-		if err != nil {
-			return nil, fmt.Errorf("error getting vcluster load balancer service %s/%s: %w", vConfig.WorkloadNamespace, vConfig.WorkloadService, err)
-		} else if lbSVC.Spec.ClusterIP == "" {
-			return nil, fmt.Errorf("target service %s/%s is missing a clusterIP", vConfig.WorkloadNamespace, vConfig.WorkloadService)
-		}
-
-		for _, ing := range lbSVC.Status.LoadBalancer.Ingress {
-			if ing.IP != "" {
-				retSANs = append(retSANs, ing.IP)
-			}
-			if ing.Hostname != "" {
-				retSANs = append(retSANs, ing.Hostname)
-			}
-		}
-		// append hostnames for load balancer service
-		retSANs = append(
-			retSANs,
-			vConfig.WorkloadService,
-			vConfig.WorkloadService+"."+vConfig.WorkloadNamespace, "*."+translate.VClusterName+"."+vConfig.WorkloadNamespace+"."+constants.NodeSuffix,
-		)
-	}
-
 	if vConfig.Networking.Advanced.ProxyKubelets.ByIP {
 		// get cluster ips of node services
 		svcs := &corev1.ServiceList{}
-		err = workloadNamespaceClient.List(ctx, svcs, client.InNamespace(vConfig.WorkloadNamespace), client.MatchingLabels{nodeservice.ServiceClusterLabel: translate.VClusterName})
+		err = workloadNamespaceClient.List(ctx, svcs, client.InNamespace(vConfig.HostNamespace), client.MatchingLabels{nodeservice.ServiceClusterLabel: translate.VClusterName})
 		if err != nil {
 			return nil, err
 		}
@@ -288,6 +313,27 @@ func getExtraSANs(ctx context.Context, workloadNamespaceClient, vClient client.C
 
 	sort.Strings(retSANs)
 	return retSANs, nil
+}
+
+var (
+	servingCertDurationOnce  sync.Once
+	servingCertDurationValue time.Duration
+)
+
+// servingCertDuration returns the validity period for the API server serving
+// certificate. It defaults to 365 days but can be overridden by setting both
+// DEVELOPMENT=true and VCLUSTER_CERTS_VALIDITYPERIOD (e.g. "5m") for testing.
+func servingCertDuration() time.Duration {
+	servingCertDurationOnce.Do(func() {
+		servingCertDurationValue = certhelper.DefaultCertDuration
+		dev, period := os.Getenv("DEVELOPMENT"), os.Getenv("VCLUSTER_CERTS_VALIDITYPERIOD")
+		if dev == "true" && period != "" {
+			if d, err := time.ParseDuration(period); err == nil {
+				servingCertDurationValue = d
+			}
+		}
+	})
+	return servingCertDurationValue
 }
 
 func addSANs(altNames *certhelper.AltNames, sans []string) {

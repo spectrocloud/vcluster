@@ -13,13 +13,13 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type fromHostTranslate struct {
 	gvk            schema.GroupVersionKind
-	eventRecorder  record.EventRecorder
+	eventRecorder  events.EventRecorder
 	virtualToHost  map[string]string
 	hostToVirtual  map[string]string
 	namespace      string
@@ -39,10 +39,10 @@ func NewFromHostTranslatorForGVK(ctx *synccontext.RegisterContext, gvk schema.Gr
 
 	return &fromHostTranslate{
 		gvk:            gvk,
-		eventRecorder:  ctx.VirtualManager.GetEventRecorderFor("from-host-" + strings.ToLower(gvk.Kind) + "-syncer"),
+		eventRecorder:  ctx.VirtualManager.GetEventRecorder("from-host-" + strings.ToLower(gvk.Kind) + "-syncer"),
 		virtualToHost:  virtualToHost,
 		hostToVirtual:  hostToVirtual,
-		namespace:      ctx.Config.ControlPlaneNamespace,
+		namespace:      ctx.Config.HostNamespace,
 		translatorName: "from-host-" + strings.ToLower(gvk.Kind),
 		skipFuncs:      skipFuncs,
 	}, nil
@@ -97,7 +97,7 @@ func (c *fromHostTranslate) IsManaged(ctx *synccontext.SyncContext, pObj client.
 	return managed, nil
 }
 
-func (c *fromHostTranslate) EventRecorder() record.EventRecorder {
+func (c *fromHostTranslate) EventRecorder() events.EventRecorder {
 	return c.eventRecorder
 }
 
@@ -117,11 +117,11 @@ func matchesHostObject(ctx *synccontext.SyncContext, hostName, hostNamespace str
 	// whether specific mappings where defined or not.
 	if ctx.Config.Config.Sync.ToHost.Namespaces.Enabled {
 		ns := &corev1.Namespace{}
-		if err := ctx.PhysicalClient.Get(ctx.Context, types.NamespacedName{Name: hostNamespace}, ns, &client.GetOptions{}); err != nil {
+		if err := ctx.HostClient.Get(ctx.Context, types.NamespacedName{Name: hostNamespace}, ns, &client.GetOptions{}); err != nil {
 			return types.NamespacedName{}, false
 		}
 
-		if isImportedByOthervCluster(ns, ctx.Config.Name, ctx.Config.ControlPlaneNamespace) {
+		if isImportedByOthervCluster(ns, ctx.Config.Name, ctx.Config.HostNamespace) {
 			return types.NamespacedName{}, false
 		}
 

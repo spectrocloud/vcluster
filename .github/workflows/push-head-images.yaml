@@ -6,6 +6,14 @@ on:
       - main
 
 jobs:
+  chart-changes:
+    if: github.repository_owner == 'loft-sh' # do not run on forks
+    uses: loft-sh/github-actions/.github/workflows/detect-changes.yaml@detect-changes/v1
+    with:
+      paths: |
+        - "chart/**"
+        - ".github/workflows/push-head-images.yaml"
+
   helm-unit-tests:
     name: Execute all helm tests
     if: github.repository_owner == 'loft-sh' # do not run on forks
@@ -14,7 +22,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Install Helm Unit Test Plugin
         run: |
           helm plugin install https://github.com/helm-unittest/helm-unittest --version v0.4.4
@@ -30,9 +38,9 @@ jobs:
       contents: read
     steps:
       - name: Check out code into the Go module directory
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: false
@@ -52,12 +60,12 @@ jobs:
       packages: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           cache: false
           go-version-file: go.mod
@@ -93,3 +101,35 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TELEMETRY_PRIVATE_KEY: ""
           CI_BRANCH: ${{ github.ref_name }}
+
+  push-head-chart:
+    needs: [chart-changes, helm-unit-tests]
+    if: needs.chart-changes.outputs.has_changed == 'true'
+    runs-on: ubuntu-latest
+    name: Push Head Chart
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Compute chart-versions JSON
+        id: versions
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          echo "chart_versions=[\"0.0.0-latest\",\"0.0.0-${SHORT_SHA}\"]" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish head chart
+        uses: loft-sh/github-actions/.github/actions/publish-helm-chart@publish-helm-chart/v1
+        with:
+          chart-name: vcluster-head
+          chart-description: "vCluster HEAD - Development builds from main branch"
+          app-version: head-${{ github.sha }}
+          chart-versions: ${{ steps.versions.outputs.chart_versions }}
+          chart-museum-user: ${{ secrets.CHART_MUSEUM_USER }}
+          chart-museum-password: ${{ secrets.CHART_MUSEUM_PASSWORD }}

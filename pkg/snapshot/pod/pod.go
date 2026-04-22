@@ -15,8 +15,10 @@ import (
 
 	"github.com/loft-sh/log"
 	"github.com/loft-sh/vcluster/pkg/cli/find"
+	"github.com/loft-sh/vcluster/pkg/constants"
 	"github.com/loft-sh/vcluster/pkg/snapshot"
 	"github.com/loft-sh/vcluster/pkg/util/clihelper"
+	"github.com/loft-sh/vcluster/pkg/util/osutil"
 	"github.com/loft-sh/vcluster/pkg/util/podhelper"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
@@ -74,12 +76,12 @@ func SnapshotExec(
 	}
 
 	// build env variables
-	optionsString, err := toOptionsString(snapshotOptions)
+	optionsString, err := ToOptionsString(snapshotOptions)
 	if err != nil {
 		return err
 	}
 	envVariables := append([]string{
-		"VCLUSTER_STORAGE_OPTIONS=" + optionsString,
+		constants.VClusterStorageOptionsEnv + "=" + optionsString,
 		"POD_NAME=" + vCluster.Name + "-0",
 	}, podOptions.Env...)
 
@@ -150,7 +152,7 @@ func RunSnapshotPod(
 		if err != nil {
 			klog.Warningf("Error deleting snapshot pod: %v", err)
 		}
-		os.Exit(1)
+		osutil.Exit(1)
 	}()
 
 	// wait for pod to become ready
@@ -221,12 +223,12 @@ func CreateSnapshotPod(
 
 	// build args
 	env := syncerContainer.Env
-	optionsString, err := toOptionsString(snapshotOptions)
+	optionsString, err := ToOptionsString(snapshotOptions)
 	if err != nil {
 		return nil, err
 	}
 	env = append(env, corev1.EnvVar{
-		Name:  "VCLUSTER_STORAGE_OPTIONS",
+		Name:  constants.VClusterStorageOptionsEnv,
 		Value: optionsString,
 	})
 
@@ -297,6 +299,7 @@ func CreateSnapshotPod(
 			SecurityContext:               podSpec.SecurityContext,
 			ImagePullSecrets:              imagePullSecrets,
 			Volumes:                       append(podSpec.Volumes, extraVolumes...),
+			InitContainers:                podSpec.InitContainers,
 			Containers: []corev1.Container{
 				{
 					Name:            "snapshot",
@@ -384,7 +387,7 @@ func CreateSnapshotPod(
 	return newPod, nil
 }
 
-func toOptionsString(options *snapshot.Options) (string, error) {
+func ToOptionsString(options *snapshot.Options) (string, error) {
 	jsonBytes, err := json.Marshal(options)
 	if err != nil {
 		return "", err

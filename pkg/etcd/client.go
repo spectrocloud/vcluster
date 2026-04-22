@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	vconfig "github.com/loft-sh/vcluster/config"
 	"github.com/loft-sh/vcluster/pkg/config"
 	"github.com/loft-sh/vcluster/pkg/constants"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -20,16 +19,21 @@ type Value struct {
 	Modified int64
 }
 
-var ErrNotFound = errors.New("etcdwrapper: key not found")
+var (
+	ErrNotFound = errors.New("etcdwrapper: key not found")
+	ErrConflict = errors.New("etcdwrapper: conflict")
+)
 
 type Client interface {
 	List(ctx context.Context, key string) ([]Value, error)
 	ListStream(ctx context.Context, key string) <-chan *ValueOrError
 	Watch(ctx context.Context, key string) clientv3.WatchChan
 	Get(ctx context.Context, key string) (Value, error)
-	Put(ctx context.Context, key string, value []byte) error
+	Put(ctx context.Context, key string, value []byte) (int64, error)
+	PutAtRevision(ctx context.Context, key string, revision int64, value []byte) (int64, error)
 	Delete(ctx context.Context, key string) error
 	DeletePrefix(ctx context.Context, prefix string) error
+	Compact(ctx context.Context, revision int64) error
 	Close() error
 }
 
@@ -46,11 +50,18 @@ func GetEtcdEndpoint(vConfig *config.VirtualClusterConfig) (string, *Certificate
 
 	// handle different backing store's
 	if vConfig.ControlPlane.BackingStore.Etcd.Deploy.Enabled || vConfig.ControlPlane.BackingStore.Etcd.Embedded.Enabled {
+		// In standalone mode the PKI lives under the configured data directory,
+		// not the pod-based default (/data/pki).
+		pkiDir := constants.PKIDir
+		if vConfig.ControlPlane.Standalone.Enabled && vConfig.ControlPlane.Standalone.DataDir != "" {
+			pkiDir = filepath.Join(vConfig.ControlPlane.Standalone.DataDir, "pki")
+		}
+
 		// embedded or deployed etcd
 		etcdCertificates = &Certificates{
-			CaCert:     filepath.Join(constants.PKIDir, "etcd", "ca.crt"),
-			ServerCert: filepath.Join(constants.PKIDir, "apiserver-etcd-client.crt"),
-			ServerKey:  filepath.Join(constants.PKIDir, "apiserver-etcd-client.key"),
+			CaCert:     filepath.Join(pkiDir, "etcd", "ca.crt"),
+			ServerCert: filepath.Join(pkiDir, "apiserver-etcd-client.crt"),
+			ServerKey:  filepath.Join(pkiDir, "apiserver-etcd-client.key"),
 		}
 
 		if vConfig.ControlPlane.BackingStore.Etcd.Embedded.Enabled {
@@ -67,10 +78,8 @@ func GetEtcdEndpoint(vConfig *config.VirtualClusterConfig) (string, *Certificate
 			ServerCert: vConfig.ControlPlane.BackingStore.Etcd.External.TLS.CertFile,
 			ServerKey:  vConfig.ControlPlane.BackingStore.Etcd.External.TLS.KeyFile,
 		}
-	} else if vConfig.Distro() == vconfig.K8SDistro {
+	} else {
 		etcdEndpoints = constants.K8sKineEndpoint
-	} else if vConfig.Distro() == vconfig.K3SDistro {
-		etcdEndpoints = constants.K3sKineEndpoint
 	}
 
 	return etcdEndpoints, etcdCertificates
@@ -102,32 +111,48 @@ type ValueOrError struct {
 	Error error
 }
 
-func (c *client) ListStream(ctx context.Context, key string) <-chan *ValueOrError {
+func (c *client) ListStream(ctx context.Context, prefix string) <-chan *ValueOrError {
+	return listStream(ctx, prefix, c.c.Get)
+}
+
+func listStream(
+	ctx context.Context,
+	prefix string,
+	getFn func(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.GetResponse, error),
+) <-chan *ValueOrError {
 	retChan := make(chan *ValueOrError, 1000)
 
-	originalKey := key
 	go func() {
 		defer close(retChan)
 
+		var revision int64
 		first := true
+		rangeEnd := clientv3.GetPrefixRangeEnd(prefix)
+		startKey := prefix
+
 		for {
-			options := []clientv3.OpOption{clientv3.WithRev(0), clientv3.WithLimit(1000)}
-			if first {
-				options = append(options, clientv3.WithPrefix())
-			} else {
-				options = append(options, clientv3.WithRange(string(getPrefix([]byte(originalKey)))))
+			options := []clientv3.OpOption{
+				clientv3.WithLimit(1000),
+				clientv3.WithRange(rangeEnd),
 			}
 
-			resp, err := c.c.Get(
-				ctx,
-				key,
-				options...,
-			)
+			if first {
+				// read at current revision
+				options = append(options, clientv3.WithRev(0))
+			} else {
+				options = append(options, clientv3.WithRev(revision))
+			}
+
+			resp, err := getFn(ctx, startKey, options...)
 			if err != nil {
 				retChan <- &ValueOrError{Error: err}
 				return
 			} else if len(resp.Kvs) == 0 {
 				return
+			}
+			if first {
+				revision = resp.Header.Revision
+				first = false
 			}
 
 			for _, kv := range resp.Kvs {
@@ -138,10 +163,10 @@ func (c *client) ListStream(ctx context.Context, key string) <-chan *ValueOrErro
 						Modified: kv.ModRevision,
 					},
 				}
-
-				key = string(kv.Key)
-				first = false
 			}
+			// move to the next page
+			// advance past last key to avoid duplicates
+			startKey = nextStartKey(resp.Kvs[len(resp.Kvs)-1].Key)
 
 			if !resp.More {
 				break
@@ -150,6 +175,11 @@ func (c *client) ListStream(ctx context.Context, key string) <-chan *ValueOrErro
 	}()
 
 	return retChan
+}
+
+func (c *client) Compact(ctx context.Context, revision int64) error {
+	_, err := c.c.Compact(ctx, revision, clientv3.WithCompactPhysical())
+	return err
 }
 
 func (c *client) Watch(ctx context.Context, key string) clientv3.WatchChan {
@@ -191,10 +221,10 @@ func (c *client) Get(ctx context.Context, key string) (Value, error) {
 	return Value{}, ErrNotFound
 }
 
-func (c *client) Put(ctx context.Context, key string, value []byte) error {
+func (c *client) Put(ctx context.Context, key string, value []byte) (int64, error) {
 	val, err := c.Get(ctx, key)
 	if err != nil && !errors.Is(err, ErrNotFound) {
-		return err
+		return 0, err
 	}
 	if val.Modified == 0 {
 		return c.Create(ctx, key, value)
@@ -202,35 +232,44 @@ func (c *client) Put(ctx context.Context, key string, value []byte) error {
 	return c.Update(ctx, key, val.Modified, value)
 }
 
-func (c *client) Create(ctx context.Context, key string, value []byte) error {
+// PutAtRevision performs an optimistic update for the given revision.
+// If revision is 0, the key must not exist.
+func (c *client) PutAtRevision(ctx context.Context, key string, revision int64, value []byte) (int64, error) {
+	if revision <= 0 {
+		return c.Create(ctx, key, value)
+	}
+	return c.Update(ctx, key, revision, value)
+}
+
+func (c *client) Create(ctx context.Context, key string, value []byte) (int64, error) {
 	resp, err := c.c.Txn(ctx).
 		If(clientv3.Compare(clientv3.ModRevision(key), "=", 0)).
 		Then(clientv3.OpPut(key, string(value))).
 		Commit()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if !resp.Succeeded {
-		return errors.New("key exists")
+		return 0, fmt.Errorf("%w: key exists", ErrConflict)
 	}
 
-	return nil
+	return resp.Header.Revision, nil
 }
 
-func (c *client) Update(ctx context.Context, key string, revision int64, value []byte) error {
+func (c *client) Update(ctx context.Context, key string, revision int64, value []byte) (int64, error) {
 	resp, err := c.c.Txn(ctx).
 		If(clientv3.Compare(clientv3.ModRevision(key), "=", revision)).
 		Then(clientv3.OpPut(key, string(value))).
 		Else(clientv3.OpGet(key)).
 		Commit()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if !resp.Succeeded {
-		return fmt.Errorf("revision %d doesnt match", revision)
+		return 0, fmt.Errorf("%w: revision %d doesnt match", ErrConflict, revision)
 	}
 
-	return nil
+	return resp.Header.Revision, nil
 }
 
 func (c *client) Delete(ctx context.Context, key string) error {
@@ -252,17 +291,11 @@ func (c *client) Close() error {
 	return c.c.Close()
 }
 
-func getPrefix(key []byte) []byte {
-	end := make([]byte, len(key))
-	copy(end, key)
-	for i := len(end) - 1; i >= 0; i-- {
-		if end[i] < 0xff {
-			end[i] = end[i] + 1
-			end = end[:i+1]
-			return end
-		}
-	}
-	// next prefix does not exist (e.g., 0xffff);
-	// default to WithFromKey policy
-	return []byte{0}
+func nextStartKey(key []byte) string {
+	b := make([]byte, len(key)+1)
+	copy(b, key)
+	// Compute the next lexicographic key strictly after the current one.
+	// Example: "foo" -> "foo\x00". This is used for snapshot pagination to avoid duplicate keys between pages.
+	b[len(key)] = 0x00
+	return string(b)
 }

@@ -17,17 +17,18 @@
     .Values.rbac.clusterRole.overwriteRules
     (not (empty (include "vcluster.rbac.clusterRoleExtraRules" . )))
     (not (empty (include "vcluster.plugin.clusterRoleExtraRules" . )))
-    (not (empty (include "vcluster.generic.clusterRoleExtraRules" . )))
     .Values.networking.replicateServices.fromHost
     .Values.pro
     .Values.sync.toHost.storageClasses.enabled
-    .Values.experimental.isolatedControlPlane.enabled
     .Values.sync.toHost.persistentVolumes.enabled
     .Values.sync.toHost.priorityClasses.enabled
+    .Values.sync.toHost.resourceClaims.enabled
+    .Values.sync.toHost.resourceClaimTemplates.enabled
     .Values.sync.fromHost.priorityClasses.enabled
     .Values.sync.toHost.volumeSnapshotContents.enabled
     .Values.sync.fromHost.volumeSnapshotClasses.enabled
-    (and (eq (include "vcluster.distro" .) "k8s") .Values.controlPlane.distro.k8s.scheduler.enabled)
+    .Values.sync.fromHost.deviceClasses.enabled
+    .Values.controlPlane.distro.k8s.scheduler.enabled
     .Values.controlPlane.advanced.virtualScheduler.enabled
     .Values.sync.toHost.pods.hybridScheduling.enabled
     .Values.sync.fromHost.ingressClasses.enabled
@@ -47,7 +48,21 @@
     .Values.sync.fromHost.secrets.enabled
     .Values.integrations.istio.enabled
     .Values.sync.toHost.namespaces.enabled
+    (include "vcluster.enableVolumeSnapshotRules" .)
      -}}
+{{- true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+  Whether to add all rules required for volume snapshots or not
+*/}}
+{{- define "vcluster.enableVolumeSnapshotRules" -}}
+{{- if eq (toString .Values.rbac.enableVolumeSnapshotRules.enabled) "true" -}}
+{{- true -}}
+{{- else if eq (toString .Values.rbac.enableVolumeSnapshotRules.enabled) "auto" -}}
+{{- if not .Values.privateNodes.enabled -}}
 {{- true -}}
 {{- end -}}
 {{- end -}}
@@ -123,25 +138,13 @@
 {{/*
   Role rules defined in generic syncer
 */}}
-{{- define "vcluster.generic.roleExtraRules" -}}
-{{- if .Values.experimental.genericSync.role }}
-{{- if .Values.experimental.genericSync.role.extraRules }}
-{{- range $ruleIndex, $rule := .Values.experimental.genericSync.role.extraRules }}
-- {{ toJson $rule }}
-{{- end }}
-{{- end }}
-{{- end }}
-{{- end -}}
-
-{{/*
-  Role rules defined in generic syncer
-*/}}
 {{- define "vcluster.customResources.roleExtraRules" -}}
 {{- if .Values.sync.toHost.customResources }}
 {{- range $crdName, $rule := .Values.sync.toHost.customResources }}
 {{- if $rule.enabled }}
-- resources: [ "{{ (splitn "." 2 $crdName)._0 }}" ]
-  apiGroups: [ "{{ (splitn "." 2 $crdName)._1 }}" ]
+{{- $crdNameWithoutVersion := (split "/" $crdName)._0 -}}  # Takes part before "/"
+- resources: [ "{{ (splitn "." 2 $crdNameWithoutVersion)._0 }}" ]
+  apiGroups: [ "{{ (splitn "." 2 $crdNameWithoutVersion)._1 }}" ]
   verbs: ["create", "delete", "patch", "update", "get", "list", "watch"]
 {{- end }}
 {{- end }}
@@ -155,22 +158,10 @@
 {{- if .Values.sync.fromHost.customResources }}
 {{- range $crdName, $rule := .Values.sync.fromHost.customResources }}
 {{- if $rule.enabled }}
-- resources: [ "{{ (splitn "." 2 $crdName)._0 }}" ]
-  apiGroups: [ "{{ (splitn "." 2 $crdName)._1 }}" ]
+{{- $crdNameWithoutVersion := (split "/" $crdName)._0 -}}  # Takes part before "/"
+- resources: [ "{{ (splitn "." 2 $crdNameWithoutVersion)._0 }}" ]
+  apiGroups: [ "{{ (splitn "." 2 $crdNameWithoutVersion)._1 }}" ]
   verbs: ["get", "list", "watch"]
-{{- end }}
-{{- end }}
-{{- end }}
-{{- end -}}
-
-{{/*
-  Cluster role rules defined in generic syncer
-*/}}
-{{- define "vcluster.generic.clusterRoleExtraRules" -}}
-{{- if .Values.experimental.genericSync.clusterRole }}
-{{- if .Values.experimental.genericSync.clusterRole.extraRules }}
-{{- range $ruleIndex, $rule := .Values.experimental.genericSync.clusterRole.extraRules }}
-- {{ toJson $rule }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -191,7 +182,7 @@
   Whether to create a role and role binding to access the platform API key secret
 */}}
 {{- define "vcluster.rbac.createPlatformSecretRole" -}}
-{{- $createRBAC := dig "platform" "apiKey" "createRBAC" true .Values.external -}}
+{{- $createRBAC := dig "apiKey" "createRBAC" true (.Values.platform | default dict) -}}
 {{- if and $createRBAC (ne (include "vcluster.rbac.platformSecretNamespace" .) .Release.Namespace) }}
 {{- true -}}
 {{- end }}
@@ -201,14 +192,14 @@
   Namespace containing the vCluster platform secret
 */}}
 {{- define "vcluster.rbac.platformSecretNamespace" -}}
-{{- dig "platform" "apiKey" "namespace" .Release.Namespace .Values.external | default .Release.Namespace -}}
+{{- dig "apiKey" "namespace" .Release.Namespace (.Values.platform | default dict) | default .Release.Namespace -}}
 {{- end -}}
 
 {{/*
   Name specifies the secret name containing the vCluster platform licenses and tokens
 */}}
 {{- define "vcluster.rbac.platformSecretName" -}}
-{{- dig "platform" "apiKey" "secretName" "vcluster-platform-api-key" .Values.external | quote -}}
+{{- dig "apiKey" "secretName" "" (.Values.platform | default dict) | default "vcluster-platform-api-key" | quote -}}
 {{- end -}}
 
 {{- define "vcluster.rbac.platformRoleName" -}}

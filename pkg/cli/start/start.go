@@ -70,6 +70,7 @@ type StartOptions struct { //nolint:revive // linter suggests renaming to option
 	Upgrade          bool
 	ReuseValues      bool
 	Docker           bool
+	Secure           bool
 }
 
 func NewLoftStarter(options StartOptions) *LoftStarter {
@@ -86,7 +87,7 @@ type LoftStarter struct {
 func (l *LoftStarter) Start(ctx context.Context) error {
 	// start in Docker?
 	if l.Docker {
-		return l.startDocker(ctx, "loft")
+		return l.startDocker(ctx, "vcluster-platform")
 	}
 
 	// only set local port by default in kubernetes installation
@@ -129,7 +130,7 @@ func (l *LoftStarter) Start(ctx context.Context) error {
 	l.Log.Info(product.Replace("Welcome to Loft!"))
 	l.Log.Info(product.Replace("This installer will help you configure and deploy Loft."))
 
-	err = l.upgradeLoft()
+	err = l.upgradeLoft(ctx)
 	if err != nil {
 		return err
 	}
@@ -304,7 +305,7 @@ func (l *LoftStarter) handleAlreadyExistingInstallation(ctx context.Context) err
 
 	// Only upgrade if --upgrade flag is present or user decided to enable ingress
 	if l.Upgrade || enableIngress {
-		err := l.upgradeLoft()
+		err := l.upgradeLoft(ctx)
 		if err != nil {
 			return err
 		}

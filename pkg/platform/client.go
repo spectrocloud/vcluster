@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"errors"
@@ -46,6 +47,8 @@ const (
 var (
 	Self     *managementv1.Self
 	selfOnce sync.Once
+
+	ErrInvalidAccessKey = errors.New("invalid access key")
 )
 
 type Client interface {
@@ -60,6 +63,7 @@ type Client interface {
 	VirtualCluster(cluster, namespace, virtualCluster string) (kube.Interface, error)
 
 	ManagementConfig() (*rest.Config, error)
+	RestConfig(hostSuffix string) (*rest.Config, error)
 
 	Config() *config.CLI
 	Save() error
@@ -159,11 +163,11 @@ func (c *client) Save() error {
 }
 
 func (c *client) Delete() error {
-	return c.config.Delete()
+	return c.config.ClearPlatform()
 }
 
 func (c *client) ManagementConfig() (*rest.Config, error) {
-	return c.restConfig("/kubernetes/management")
+	return c.RestConfig("/kubernetes/management")
 }
 
 func (c *client) Management() (kube.Interface, error) {
@@ -176,7 +180,7 @@ func (c *client) Management() (kube.Interface, error) {
 }
 
 func (c *client) SpaceInstanceConfig(project, name string) (*rest.Config, error) {
-	return c.restConfig("/kubernetes/project/" + project + "/space/" + name)
+	return c.RestConfig("/kubernetes/project/" + project + "/space/" + name)
 }
 
 func (c *client) SpaceInstance(project, name string) (kube.Interface, error) {
@@ -189,7 +193,7 @@ func (c *client) SpaceInstance(project, name string) (kube.Interface, error) {
 }
 
 func (c *client) VirtualClusterInstanceConfig(project, name string) (*rest.Config, error) {
-	return c.restConfig("/kubernetes/project/" + project + "/virtualcluster/" + name)
+	return c.RestConfig("/kubernetes/project/" + project + "/virtualcluster/" + name)
 }
 
 func (c *client) VirtualClusterInstance(project, name string) (kube.Interface, error) {
@@ -202,7 +206,7 @@ func (c *client) VirtualClusterInstance(project, name string) (kube.Interface, e
 }
 
 func (c *client) ClusterConfig(cluster string) (*rest.Config, error) {
-	return c.restConfig("/kubernetes/cluster/" + cluster)
+	return c.RestConfig("/kubernetes/cluster/" + cluster)
 }
 
 func (c *client) Cluster(cluster string) (kube.Interface, error) {
@@ -215,7 +219,7 @@ func (c *client) Cluster(cluster string) (kube.Interface, error) {
 }
 
 func (c *client) VirtualClusterConfig(cluster, namespace, virtualCluster string) (*rest.Config, error) {
-	return c.restConfig("/kubernetes/virtualcluster/" + cluster + "/" + namespace + "/" + virtualCluster)
+	return c.RestConfig("/kubernetes/virtualcluster/" + cluster + "/" + namespace + "/" + virtualCluster)
 }
 
 func (c *client) VirtualCluster(cluster, namespace, virtualCluster string) (kube.Interface, error) {
@@ -240,7 +244,7 @@ func verifyHost(host string) error {
 }
 
 func (c *client) Version() (*auth.Version, error) {
-	restConfig, err := c.restConfig("")
+	restConfig, err := c.RestConfig("")
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +320,7 @@ func (c *client) LoginWithAccessKey(host, accessKey string, insecure bool) error
 
 	platformConfig := c.Config().Platform
 	if platformConfig.Host == host && platformConfig.AccessKey == accessKey {
-		return nil
+		return c.mgmtLogin(host, accessKey, insecure)
 	}
 
 	// delete old access key if were logged in before
@@ -363,19 +367,28 @@ func (c *client) mgmtLogin(host, accessKey string, insecure bool) error {
 	if err != nil {
 		var urlError *url.Error
 		if errors.As(err, &urlError) && urlError != nil {
-			var err x509.UnknownAuthorityError
-			if errors.As(urlError.Err, &err) {
-				return fmt.Errorf(product.Replace("cannot log into a non https loft instance '%s', please make sure you have TLS enabled"), host)
+			var certErr *tls.CertificateVerificationError
+			if errors.As(urlError.Err, &certErr) {
+				return fmt.Errorf("%w: You may need to login again via `%s login %s --insecure` to allow self-signed certificates", certErr, os.Args[0], host)
+			}
+
+			// Note: CertificateVerificationError can wrap UnknownAuthorityError, so this check must come after.
+			var unknownAuthErr x509.UnknownAuthorityError
+			if errors.As(urlError.Err, &unknownAuthErr) {
+				if !strings.HasPrefix(host, "https") {
+					return fmt.Errorf(product.Replace("cannot log into a non https loft instance '%s', please make sure you have TLS enabled"), host)
+				}
+				return fmt.Errorf(product.Replace("cannot verify TLS certificate for '%s' because it is signed by an unknown authority. If you are using a self-signed certificate, login again via `%s login %s --insecure`"), host, os.Args[0], host)
 			}
 		}
 
-		return perrors.Errorf("error logging in: %v", err)
+		return fmt.Errorf("%w: %w", err, ErrInvalidAccessKey)
 	}
 
 	return nil
 }
 
-func (c *client) restConfig(hostSuffix string) (*rest.Config, error) {
+func (c *client) RestConfig(hostSuffix string) (*rest.Config, error) {
 	if c.config == nil {
 		return nil, perrors.New("no config loaded")
 	} else if c.config.Platform.Host == "" || c.config.Platform.AccessKey == "" {

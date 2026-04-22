@@ -2,6 +2,7 @@ package persistentvolumeclaims
 
 import (
 	"fmt"
+	"time"
 
 	storagev1 "k8s.io/api/storage/v1"
 
@@ -9,6 +10,7 @@ import (
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/klog/v2"
 
+	"github.com/loft-sh/vcluster/pkg/constants"
 	"github.com/loft-sh/vcluster/pkg/controllers/resources/persistentvolumes"
 	"github.com/loft-sh/vcluster/pkg/mappings"
 	"github.com/loft-sh/vcluster/pkg/patcher"
@@ -19,6 +21,7 @@ import (
 	syncertypes "github.com/loft-sh/vcluster/pkg/syncer/types"
 	"github.com/loft-sh/vcluster/pkg/util/translate"
 
+	"github.com/loft-sh/vcluster/pkg/snapshot"
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -86,6 +89,18 @@ func (s *persistentVolumeClaimSyncer) Syncer() syncertypes.Sync[client.Object] {
 }
 
 func (s *persistentVolumeClaimSyncer) SyncToHost(ctx *synccontext.SyncContext, event *synccontext.SyncToHostEvent[*corev1.PersistentVolumeClaim]) (ctrl.Result, error) {
+	// check if host PVC is currently being restored
+	pObjName := s.VirtualToHost(ctx, types.NamespacedName{Name: event.Virtual.GetName(), Namespace: event.Virtual.GetNamespace()}, event.Virtual)
+	restoreInProgress, err := s.isHostVolumeRestoreInProgress(ctx, pObjName)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to check if host volume restore is in progress: %w", err)
+	}
+	if restoreInProgress {
+		return ctrl.Result{
+			RequeueAfter: 15 * time.Second,
+		}, nil
+	}
+
 	if s.applyLimitByClass(ctx, event.Virtual) {
 		return ctrl.Result{}, nil
 	}
@@ -98,7 +113,14 @@ func (s *persistentVolumeClaimSyncer) SyncToHost(ctx *synccontext.SyncContext, e
 
 	pObj, err := s.translate(ctx, event.Virtual)
 	if err != nil {
-		s.EventRecorder().Event(event.Virtual, "Warning", "SyncError", err.Error())
+		s.EventRecorder().Eventf(
+			event.Virtual,
+			nil,
+			"Warning",
+			"SyncError",
+			fmt.Sprintf("Sync%s", event.Virtual.GetObjectKind().GroupVersionKind().Kind),
+			err.Error(),
+		)
 		return ctrl.Result{}, err
 	}
 
@@ -113,6 +135,21 @@ func (s *persistentVolumeClaimSyncer) SyncToHost(ctx *synccontext.SyncContext, e
 func (s *persistentVolumeClaimSyncer) Sync(ctx *synccontext.SyncContext, event *synccontext.SyncEvent[*corev1.PersistentVolumeClaim]) (_ ctrl.Result, retErr error) {
 	if s.applyLimitByClass(ctx, event.Virtual) {
 		return ctrl.Result{}, nil
+	}
+
+	// check if host PVC is currently being restored
+	hostObjName := types.NamespacedName{
+		Name:      event.Host.GetName(),
+		Namespace: event.Host.GetNamespace(),
+	}
+	restoreInProgress, err := s.isHostVolumeRestoreInProgress(ctx, hostObjName)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to check if host volume restore is in progress: %w", err)
+	}
+	if restoreInProgress {
+		return ctrl.Result{
+			RequeueAfter: 15 * time.Second,
+		}, nil
 	}
 
 	// if pvs are deleted check the corresponding pvc is deleted as well
@@ -152,7 +189,15 @@ func (s *persistentVolumeClaimSyncer) Sync(ctx *synccontext.SyncContext, event *
 		}
 
 		if retErr != nil {
-			s.EventRecorder().Eventf(event.Virtual, "Warning", "SyncError", "Error syncing: %v", retErr)
+			s.EventRecorder().Eventf(
+				event.Virtual,
+				nil,
+				"Warning",
+				"SyncError",
+				fmt.Sprintf("Sync%s", event.Virtual.GetObjectKind().GroupVersionKind().Kind),
+				"Error syncing: %v",
+				retErr,
+			)
 		}
 	}()
 
@@ -213,7 +258,16 @@ func (s *persistentVolumeClaimSyncer) ensurePersistentVolume(ctx *synccontext.Sy
 		if newVolumeName != vObj.Spec.VolumeName {
 			if vObj.Spec.VolumeName != "" {
 				log.Infof("recreate persistent volume claim because volumeName differs between physical and virtual pvc: %s != %s", vObj.Spec.VolumeName, newVolumeName)
-				s.EventRecorder().Eventf(vObj, corev1.EventTypeWarning, "VolumeNameDiffers", "recreate persistent volume claim because volumeName differs between physical and virtual pvc: %s != %s", vObj.Spec.VolumeName, newVolumeName)
+				s.EventRecorder().Eventf(
+					vObj,
+					nil,
+					corev1.EventTypeWarning,
+					"VolumeNameDiffers",
+					fmt.Sprintf("Sync%s", vObj.GetObjectKind().GroupVersionKind().Kind),
+					"recreate persistent volume claim because volumeName differs between physical and virtual pvc: %s != %s",
+					vObj.Spec.VolumeName,
+					newVolumeName,
+				)
 				_, err = recreatePersistentVolumeClaim(ctx, ctx.VirtualClient, vPV, vObj, newVolumeName, log)
 				if err != nil {
 					log.Infof("error recreating virtual persistent volume claim: %v", err)
@@ -232,6 +286,35 @@ func (s *persistentVolumeClaimSyncer) ensurePersistentVolume(ctx *synccontext.Sy
 		}
 	}
 
+	return false, nil
+}
+
+func (s *persistentVolumeClaimSyncer) isHostVolumeRestoreInProgress(ctx *synccontext.SyncContext, pObj types.NamespacedName) (bool, error) {
+	configMaps := &corev1.ConfigMapList{}
+	err := ctx.HostClient.List(ctx.Context, configMaps, client.InNamespace(ctx.Config.HostNamespace), client.MatchingLabels{
+		constants.RestoreRequestLabel: "",
+	})
+	if err != nil {
+		return false, err
+	}
+
+	pvcName := types.NamespacedName{
+		Namespace: pObj.Namespace,
+		Name:      pObj.Name,
+	}.String()
+	for _, configMap := range configMaps.Items {
+		restoreRequest, err := snapshot.UnmarshalRestoreRequest(&configMap)
+		if err != nil {
+			return false, fmt.Errorf("unmarshal restore request: %w", err)
+		}
+		volumeRestore, ok := restoreRequest.Status.VolumesRestore.PersistentVolumeClaims[pvcName]
+		if !ok {
+			continue
+		}
+		if !(volumeRestore.CleaningUp() || volumeRestore.Done()) {
+			return true, nil
+		}
+	}
 	return false, nil
 }
 
@@ -299,23 +382,57 @@ func recreatePersistentVolumeClaim(ctx *synccontext.SyncContext, virtualClient c
 }
 
 func (s *persistentVolumeClaimSyncer) applyLimitByClass(ctx *synccontext.SyncContext, virtual *corev1.PersistentVolumeClaim) bool {
-	// Get the host storage class and check if it matches the selector
-	if ctx.Config.Sync.FromHost.StorageClasses.Enabled.Bool() && virtual.Spec.StorageClassName != nil && *virtual.Spec.StorageClassName != "" {
-		pStorageClass := &storagev1.StorageClass{}
-		err := ctx.PhysicalClient.Get(ctx.Context, types.NamespacedName{Name: *virtual.Spec.StorageClassName}, pStorageClass)
-		if err != nil || pStorageClass.GetDeletionTimestamp() != nil {
-			s.EventRecorder().Eventf(virtual, "Warning", "SyncWarning", "did not sync persistent volume claim %q to host because the storage class %q couldn't be reached in the host: %s", virtual.GetName(), *virtual.Spec.StorageClassName, err)
-			return true
-		}
-		matches, err := ctx.Config.Sync.FromHost.StorageClasses.Selector.Matches(pStorageClass)
-		if err != nil {
-			s.EventRecorder().Eventf(virtual, "Warning", "SyncWarning", "did not sync persistent volume claim %q to host because the storage class %q in the host could not be checked against the selector under 'sync.fromHost.storageClasses.selector': %s", virtual.GetName(), pStorageClass.GetName(), err)
-			return true
-		}
-		if !matches {
-			s.EventRecorder().Eventf(virtual, "Warning", "SyncWarning", "did not sync persistent volume claim %q to host because the storage class %q in the host does not match the selector under 'sync.fromHost.storageClasses.selector'", virtual.GetName(), pStorageClass.GetName())
-			return true
-		}
+	if !ctx.Config.Sync.FromHost.StorageClasses.Enabled.Bool() ||
+		ctx.Config.Sync.FromHost.StorageClasses.Selector.Empty() ||
+		virtual.Spec.StorageClassName == nil ||
+		*virtual.Spec.StorageClassName == "" {
+		return false
 	}
+
+	pStorageClass := &storagev1.StorageClass{}
+	err := ctx.HostClient.Get(ctx.Context, types.NamespacedName{Name: *virtual.Spec.StorageClassName}, pStorageClass)
+	if err != nil || pStorageClass.GetDeletionTimestamp() != nil {
+		s.EventRecorder().Eventf(
+			virtual,
+			nil,
+			"Warning",
+			"SyncWarning",
+			fmt.Sprintf("Sync%s", virtual.GetObjectKind().GroupVersionKind().Kind),
+			"did not sync persistent volume claim %q to host because the storage class %q couldn't be reached in the host: %s",
+			virtual.GetName(),
+			*virtual.Spec.StorageClassName,
+			err,
+		)
+		return true
+	}
+	matches, err := ctx.Config.Sync.FromHost.StorageClasses.Selector.Matches(pStorageClass)
+	if err != nil {
+		s.EventRecorder().Eventf(
+			virtual,
+			nil,
+			"Warning",
+			"SyncWarning",
+			fmt.Sprintf("Sync%s", virtual.GetObjectKind().GroupVersionKind().Kind),
+			"did not sync persistent volume claim %q to host because the storage class %q in the host could not be checked against the selector under 'sync.fromHost.storageClasses.selector': %s",
+			virtual.GetName(),
+			pStorageClass.GetName(),
+			err,
+		)
+		return true
+	}
+	if !matches {
+		s.EventRecorder().Eventf(
+			virtual,
+			nil,
+			"Warning",
+			"SyncWarning",
+			fmt.Sprintf("Sync%s", virtual.GetObjectKind().GroupVersionKind().Kind),
+			"did not sync persistent volume claim %q to host because the storage class %q in the host does not match the selector under 'sync.fromHost.storageClasses.selector'",
+			virtual.GetName(),
+			pStorageClass.GetName(),
+		)
+		return true
+	}
+
 	return false
 }

@@ -36,6 +36,7 @@ import (
 	"k8s.io/apiserver/pkg/server/egressselector"
 	serverstorage "k8s.io/apiserver/pkg/server/storage"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	utilpeerproxy "k8s.io/apiserver/pkg/util/peerproxy"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/transport"
 	"k8s.io/component-base/metrics/legacyregistry"
@@ -108,6 +109,10 @@ type ExtraConfig struct {
 	// the concept of services and endpoints might differ, and might require another implementation of this
 	// controller. Local APIService are reconciled nevertheless.
 	DisableRemoteAvailableConditionController bool
+
+	// PeerProxy, if not nil, sets proxy transport between kube-apiserver peers for requests
+	// that can not be served locally
+	PeerProxy utilpeerproxy.Interface
 }
 
 // Config represents the configuration needed to create an APIAggregator.
@@ -256,13 +261,7 @@ func (c completedConfig) NewWithDelegate(delegationTarget genericapiserver.Deleg
 		tracerProvider:             c.GenericConfig.TracerProvider,
 	}
 
-	// used later  to filter the served resource by those that have expired.
-	resourceExpirationEvaluator, err := genericapiserver.NewResourceExpirationEvaluator(s.GenericAPIServer.EffectiveVersion.EmulationVersion())
-	if err != nil {
-		return nil, err
-	}
-
-	apiGroupInfo := apiservicerest.NewRESTStorage(c.GenericConfig.MergedResourceConfig, c.GenericConfig.RESTOptionsGetter, resourceExpirationEvaluator.ShouldServeForVersion(1, 22))
+	apiGroupInfo := apiservicerest.NewRESTStorage(c.GenericConfig.MergedResourceConfig, c.GenericConfig.RESTOptionsGetter, false)
 	if err := s.GenericAPIServer.InstallAPIGroup(&apiGroupInfo); err != nil {
 		return nil, err
 	}
@@ -281,12 +280,17 @@ func (c completedConfig) NewWithDelegate(delegationTarget genericapiserver.Deleg
 		discoveryGroup: discoveryGroup(enabledVersions),
 	}
 
-	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.AggregatedDiscoveryEndpoint) {
-		apisHandlerWithAggregationSupport := aggregated.WrapAggregatedDiscoveryToHandler(apisHandler, s.GenericAPIServer.AggregatedDiscoveryGroupManager)
-		s.GenericAPIServer.Handler.NonGoRestfulMux.Handle("/apis", apisHandlerWithAggregationSupport)
-	} else {
-		s.GenericAPIServer.Handler.NonGoRestfulMux.Handle("/apis", apisHandler)
+	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.UnknownVersionInteroperabilityProxy) && c.ExtraConfig.PeerProxy != nil {
+		s.GenericAPIServer.PeerAggregatedDiscoveryManager = aggregated.NewPeerAggregatedDiscoveryHandler(s.GenericAPIServer.APIServerID, s.GenericAPIServer.AggregatedDiscoveryGroupManager, c.ExtraConfig.PeerProxy, "apis")
+
+		// Register cache invalidation callback to the peer proxy handler
+		if s.GenericAPIServer.PeerAggregatedDiscoveryManager != nil {
+			c.ExtraConfig.PeerProxy.RegisterCacheInvalidationCallback(s.GenericAPIServer.PeerAggregatedDiscoveryManager.InvalidateCache)
+		}
 	}
+
+	apisHandlerWithAggregationSupport := aggregated.WrapAggregatedDiscoveryToHandler(apisHandler, s.GenericAPIServer.AggregatedDiscoveryGroupManager, s.GenericAPIServer.PeerAggregatedDiscoveryManager)
+	s.GenericAPIServer.Handler.NonGoRestfulMux.Handle("/apis", apisHandlerWithAggregationSupport)
 	s.GenericAPIServer.Handler.NonGoRestfulMux.UnlistedHandle("/apis/", apisHandler)
 
 	apiserviceRegistrationController := NewAPIServiceRegistrationController(informerFactory.Apiregistration().V1().APIServices(), s)
@@ -344,7 +348,7 @@ func (c completedConfig) NewWithDelegate(delegationTarget genericapiserver.Deleg
 		remote, err := remoteavailability.New(
 			informerFactory.Apiregistration().V1().APIServices(),
 			c.GenericConfig.SharedInformerFactory.Core().V1().Services(),
-			c.GenericConfig.SharedInformerFactory.Core().V1().Endpoints(),
+			c.GenericConfig.SharedInformerFactory.Discovery().V1().EndpointSlices(),
 			apiregistrationClient.ApiregistrationV1(),
 			proxyTransportDial,
 			(func() ([]byte, []byte))(s.proxyCurrentCertKeyContent),
@@ -371,41 +375,39 @@ func (c completedConfig) NewWithDelegate(delegationTarget genericapiserver.Deleg
 		return nil
 	})
 
-	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.AggregatedDiscoveryEndpoint) {
-		s.discoveryAggregationController = NewDiscoveryManager(
-			// Use aggregator as the source name to avoid overwriting native/CRD
-			// groups
-			s.GenericAPIServer.AggregatedDiscoveryGroupManager.WithSource(aggregated.AggregatorSource),
-		)
+	s.discoveryAggregationController = NewDiscoveryManager(
+		// Use aggregator as the source name to avoid overwriting native/CRD
+		// groups
+		s.GenericAPIServer.AggregatedDiscoveryGroupManager.WithSource(aggregated.AggregatorSource),
+	)
 
-		// Setup discovery endpoint
-		s.GenericAPIServer.AddPostStartHookOrDie("apiservice-discovery-controller", func(context genericapiserver.PostStartHookContext) error {
-			// Discovery aggregation depends on the apiservice registration controller
-			// having the full list of APIServices already synced
-			select {
-			case <-context.Done():
-				return nil
-			// Context cancelled, should abort/clean goroutines
-			case <-apiServiceRegistrationControllerInitiated:
-			}
-
-			// Run discovery manager's worker to watch for new/removed/updated
-			// APIServices to the discovery document can be updated at runtime
-			// When discovery is ready, all APIServices will be present, with APIServices
-			// that have not successfully synced discovery to be present but marked as Stale.
-			discoverySyncedCh := make(chan struct{})
-			go s.discoveryAggregationController.Run(context.Done(), discoverySyncedCh)
-
-			select {
-			case <-context.Done():
-				return nil
-			// Context cancelled, should abort/clean goroutines
-			case <-discoverySyncedCh:
-				// API services successfully sync
-			}
+	// Setup discovery endpoint
+	s.GenericAPIServer.AddPostStartHookOrDie("apiservice-discovery-controller", func(context genericapiserver.PostStartHookContext) error {
+		// Discovery aggregation depends on the apiservice registration controller
+		// having the full list of APIServices already synced
+		select {
+		case <-context.Done():
 			return nil
-		})
-	}
+		// Context cancelled, should abort/clean goroutines
+		case <-apiServiceRegistrationControllerInitiated:
+		}
+
+		// Run discovery manager's worker to watch for new/removed/updated
+		// APIServices to the discovery document can be updated at runtime
+		// When discovery is ready, all APIServices will be present, with APIServices
+		// that have not successfully synced discovery to be present but marked as Stale.
+		discoverySyncedCh := make(chan struct{})
+		go s.discoveryAggregationController.Run(context.Done(), discoverySyncedCh)
+
+		select {
+		case <-context.Done():
+			return nil
+		// Context cancelled, should abort/clean goroutines
+		case <-discoverySyncedCh:
+			// API services successfully sync
+		}
+		return nil
+	})
 
 	if utilfeature.DefaultFeatureGate.Enabled(genericfeatures.StorageVersionAPI) &&
 		utilfeature.DefaultFeatureGate.Enabled(genericfeatures.APIServerIdentity) {

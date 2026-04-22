@@ -7,6 +7,8 @@ sync:
       enabled: true
     endpoints:
       enabled: true
+    endpointSlices:
+        enabled: true
     persistentVolumeClaims:
       enabled: true
     configMaps:
@@ -28,7 +30,10 @@ sync:
       rewriteHosts:
         enabled: true
         initContainer:
-          image: "library/alpine:3.20"
+          image:
+            registry: "mirror.gcr.io"
+            repository: library/alpine
+            tag: "3.20"
           resources:
             limits:
               cpu: 30m
@@ -57,6 +62,10 @@ sync:
     namespaces:
       enabled: false
       mappingsOnly: false
+    resourceClaims:
+      enabled: false
+    resourceClaimTemplates:
+      enabled: false
 
   fromHost:
     events:
@@ -92,6 +101,8 @@ sync:
         byName: {}
     volumeSnapshotClasses:
       enabled: false
+    deviceClasses:
+      enabled: false
 
 controlPlane:
   distro:
@@ -102,7 +113,7 @@ controlPlane:
       image:
         registry: ghcr.io
         repository: "loft-sh/kubernetes"
-        tag: "v1.32.1"
+        tag: "v1.35.0"
       apiServer:
         enabled: true
         command: []
@@ -125,24 +136,6 @@ controlPlane:
           cpu: 40m
           memory: 64Mi
 
-    k3s:
-      enabled: false
-      command: []
-      extraArgs: []
-      imagePullPolicy: ""
-      image:
-        registry: ""
-        repository: "rancher/k3s"
-        tag: "v1.32.1-k3s1"
-      securityContext: {}
-      resources:
-        limits:
-          cpu: 100m
-          memory: 256Mi
-        requests:
-          cpu: 40m
-          memory: 64Mi
-
   backingStore:
     database:
       embedded:
@@ -152,6 +145,7 @@ controlPlane:
         enabled: false
         dataSource: ""
         connector: ""
+        identityProvider: ""
         certFile: ""
         keyFile: ""
         caFile: ""
@@ -178,7 +172,7 @@ controlPlane:
           image:
             registry: "registry.k8s.io"
             repository: "etcd"
-            tag: "3.5.21-0"
+            tag: "3.6.4-0"
           imagePullPolicy: ""
           extraArgs: []
           env: []
@@ -277,15 +271,23 @@ controlPlane:
     pathType: ImplementationSpecific
     labels: {}
     annotations:
-      nginx.ingress.kubernetes.io/backend-protocol: HTTPS
-      nginx.ingress.kubernetes.io/ssl-passthrough: "true"
-      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      nginx.ingress.kubernetes.io/backend-protocol: HTTPS # ingress-nginx has been deprecated
+      nginx.ingress.kubernetes.io/ssl-passthrough: "true" # ingress-nginx has been deprecated
+      nginx.ingress.kubernetes.io/ssl-redirect: "true" # ingress-nginx has been deprecated
     spec:
       tls: []
 
+  tlsRoute:
+    enabled: false
+    apiVersion: gateway.networking.k8s.io/v1
+    host: "my-host.com"
+    parentRefs: []
+    spec: {}
+    labels: {}
+    annotations: {}
+
   standalone:
     dataDir: "/var/lib/vcluster"
-    bundleRepository: "https://github.com/loft-sh/kubernetes/releases/download"
     joinNode:
       enabled: true
       containerd:
@@ -307,10 +309,10 @@ controlPlane:
 
     resources:
       limits:
-        ephemeral-storage: 8Gi
-        memory: 2Gi
+        ephemeral-storage: 10Gi
+        memory: 4Gi
       requests:
-        ephemeral-storage: 400Mi
+        ephemeral-storage: 1Gi
         cpu: 200m
         memory: 256Mi
 
@@ -374,6 +376,11 @@ controlPlane:
         timeoutSeconds: 3
         periodSeconds: 6
 
+    initContainers: []
+    sidecarContainers: []
+
+    hostAliases: []
+
   serviceMonitor:
     enabled: false
     labels: {}
@@ -417,18 +424,47 @@ controlPlane:
         extraEnv: []
         extraArgs: []
 
+    cloudControllerManager:
+      enabled: true
+
+    registry:
+      enabled: false
+      anonymousPull: true
+      config: {}
+
+    kubeVip:
+      enabled: false
+
     globalMetadata:
       annotations: {}
 
+    podDisruptionBudget:
+      enabled: false
+
 privateNodes:
   enabled: false
-  importNodeBinaries: true
+  kubelet:
+    config: {}
   autoUpgrade:
     enabled: true
     concurrency: 1
+    podSecurityContext: {}
+    containerSecurityContext: {}
   joinNode:
     containerd:
       enabled: true
+  autoNodes: []
+  vpn:
+    enabled: false
+    nodeToNode:
+      enabled: false
+  daemon:
+    enabled: false
+    controlPlaneLoadBalancer:
+      enabled: false
+      kubeProxy: true
+      port: 11343
+deploy:
   localPathProvisioner:
     enabled: true
   cni:
@@ -442,6 +478,19 @@ privateNodes:
     tolerations: []
     extraEnv: []
     extraArgs: []
+    config: {}
+  metallb:
+    enabled: false
+    ipAddressPool:
+      addresses: []
+      l2Advertisement: true
+  ingressNginx:
+    enabled: false
+    defaultIngressClass: true
+  metricsServer:
+    enabled: false
+  volumeSnapshotController:
+    enabled: false
 
 integrations:
   metricsServer:
@@ -453,14 +502,19 @@ integrations:
     webhook:
       enabled: false
     sync:
-      externalSecrets:
-        enabled: true
-      stores:
-        enabled: false
-      clusterStores:
-        enabled: false
-        selector:
-          labels: {}
+      toHost:
+        externalSecrets:
+          selector:
+            matchLabels: {}
+        stores:
+          enabled: false
+          selector:
+            matchLabels: {}
+      fromHost:
+        clusterStores:
+          enabled: false
+          selector:
+            matchLabels: {}
   kubeVirt:
     enabled: false
     webhook:
@@ -511,6 +565,8 @@ rbac:
     enabled: auto
     overwriteRules: []
     extraRules: []
+  enableVolumeSnapshotRules:
+    enabled: auto
 
 networking:
   podCIDR: "10.244.0.0/16"
@@ -570,11 +626,12 @@ policies:
     labels: {}
     annotations: {}
     fallbackDns: 8.8.8.8
-    extraControlPlaneRules: []
-    extraWorkloadRules: []
-    outgoingConnections:
-      platform: true
-      ipBlock:
+    controlPlane:
+      ingress: []
+      egress: []
+    workload:
+      publicEgress:
+        enabled: true
         cidr: 0.0.0.0/0
         except:
           - 100.64.0.0/10
@@ -582,6 +639,8 @@ policies:
           - 10.0.0.0/8
           - 172.16.0.0/12
           - 192.168.0.0/16
+      ingress: []
+      egress: []
 
   centralAdmission:
     validatingWebhooks: []
@@ -598,18 +657,23 @@ exportKubeConfig:
   secret:
     name: ""
     namespace: ""
-
-external: {}
+  additionalSecrets: []
 
 plugins: {}
 
 experimental:
-  syncSettings:
-    targetNamespace: ""
-    setOwner: true
+  docker:
+    loadBalancer:
+      enabled: true
+      forwardPorts: true
+    registryProxy:
+      enabled: true
 
-  isolatedControlPlane:
-    headless: false
+  proxy:
+    customResources: {}
+
+  syncSettings:
+    setOwner: true
 
   deploy:
     host:
@@ -619,12 +683,8 @@ experimental:
       manifests: ""
       manifestsTemplate: ""
       helm: []
-
-  genericSync:
-    clusterRole:
-      extraRules: []
-    role:
-      extraRules: []
+  
+  nodeMonitors: []
 
 telemetry:
   enabled: true

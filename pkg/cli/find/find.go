@@ -3,6 +3,8 @@ package find
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -11,10 +13,12 @@ import (
 	"github.com/loft-sh/log"
 	"github.com/loft-sh/log/survey"
 	"github.com/loft-sh/log/terminal"
+	vclusterconfig "github.com/loft-sh/vcluster/pkg/config"
 	"github.com/loft-sh/vcluster/pkg/constants"
 	"github.com/loft-sh/vcluster/pkg/platform"
 	"github.com/loft-sh/vcluster/pkg/platform/kube"
 	"github.com/loft-sh/vcluster/pkg/platform/sleepmode"
+	standaloneutil "github.com/loft-sh/vcluster/pkg/util/standalone"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/discovery"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -49,6 +53,7 @@ type VCluster struct {
 	Status                 Status
 	Context                string
 	Version                string
+	IsStandalone           bool
 }
 
 type Status string
@@ -57,6 +62,7 @@ const (
 	StatusRunning          Status = "Running"
 	StatusPaused           Status = "Paused"
 	StatusWorkloadSleeping Status = "Sleeping (workloads only)"
+	StatusScaledDown       Status = "ScaledDown"
 	StatusUnknown          Status = "Unknown"
 )
 
@@ -256,7 +262,7 @@ func ListVClusters(ctx context.Context, context, name, namespace string, log log
 			return nil, err
 		}
 	}
-	kubeClient, err := createKubeClient(context)
+	kubeClient, err := CreateKubeClient(context)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kube client: %w", err)
 	}
@@ -327,7 +333,7 @@ func ListOSSVClusters(ctx context.Context, kubeClient kube.Interface, context, n
 	}
 
 	if vClusterName != "" {
-		parentContextClient, err := createKubeClient(vClusterContext)
+		parentContextClient, err := CreateKubeClient(vClusterContext)
 		if err != nil {
 			logger := log.GetInstance()
 			logger.Warn("parent context unreachable - No vClusters listed from parent context")
@@ -350,6 +356,20 @@ func VClusterContextName(vClusterName string, vClusterNamespace string, currentC
 
 func VClusterPlatformContextName(vClusterName string, projectName string, currentContext string) string {
 	return "vcluster-platform_" + vClusterName + "_" + projectName + "_" + currentContext
+}
+
+func VClusterDockerFromContext(originalContext string) (name string, context string) {
+	if !strings.HasPrefix(originalContext, "vcluster-docker_") {
+		return "", ""
+	}
+
+	splitted := strings.Split(originalContext, "_")
+	// vcluster-docker_<name>
+	if len(splitted) == 2 {
+		return splitted[1], ""
+	}
+
+	return "", ""
 }
 
 func VClusterPlatformFromContext(originalContext string) (name string, project string, context string) {
@@ -402,18 +422,6 @@ func findInContext(ctx context.Context, kubeClient kube.Interface, context, name
 			if name != "" && name != release {
 				continue
 			}
-
-			if p.Spec.Replicas != nil && *p.Spec.Replicas == 0 && !isPaused(&p) {
-				// if the stateful set has been scaled down we'll ignore it -- this happens when
-				// using devspace to do vcluster plugin dev for example, devspace scales down the
-				// vcluster stateful set and re-creates a deployment for "dev mode" so we end up
-				// with a duplicate vcluster in the list, one for the statefulset and one for the
-				// deployment. Of course if the vcluster is paused (via `vcluster pause`), we *do*
-				// still need to care about it even if replicas == 0.
-
-				continue
-			}
-
 			vCluster, err := getVCluster(ctx, &p, context, release, kubeClient, kubeClientConfig)
 			if err != nil {
 				logger := log.GetInstance()
@@ -461,7 +469,8 @@ func getVCluster(ctx context.Context, object client.Object, context, release str
 	version := ""
 	var pods []corev1.Pod
 
-	if object.GetAnnotations()[constants.PausedAnnotation(false)] == "true" {
+	if object.GetAnnotations()[constants.PausedAnnotation(false)] == "true" ||
+		object.GetLabels()[sleepmode.Label] == "true" {
 		status = string(StatusPaused)
 	} else {
 		releaseName = "release=" + release
@@ -484,8 +493,13 @@ func getVCluster(ctx context.Context, object client.Object, context, release str
 			return VCluster{}, err
 		}
 		pods = podList.Items
-		for _, pod := range podList.Items {
-			status = GetPodStatus(&pod)
+
+		if len(podList.Items) > 0 {
+			for _, pod := range podList.Items {
+				status = GetPodStatus(&pod)
+			}
+		} else if isScaledDown(object) {
+			status = string(StatusScaledDown)
 		}
 	}
 
@@ -685,11 +699,67 @@ func GetPodStatus(pod *corev1.Pod) string {
 	return reason
 }
 
-func isPaused(v client.Object) bool {
-	annotations := v.GetAnnotations()
-	labels := v.GetLabels()
+// isScaledDown returns true if the workload's desired replica count is 0.
+// This distinguishes an intentional scale-down from a transient state where
+// pods are temporarily absent (e.g., during startup or rollout).
+func isScaledDown(object client.Object) bool {
+	switch o := object.(type) {
+	case *appsv1.StatefulSet:
+		return o.Spec.Replicas != nil && *o.Spec.Replicas == 0
+	case *appsv1.Deployment:
+		return o.Spec.Replicas != nil && *o.Spec.Replicas == 0
+	}
+	return false
+}
 
-	return annotations[constants.PausedAnnotation(false)] == "true" || labels[sleepmode.Label] == "true"
+// GetStandaloneVCluster returns a vCluster for a standalone installation on the
+// current host. Detection relies on the systemd service file existing on the
+// local filesystem, so this only works when the CLI runs on the same host as
+// the vCluster standalone. Returns nil, nil when standalone is not detected.
+func GetStandaloneVCluster() (*VCluster, error) {
+	unitData, found, err := standaloneutil.DetectStandaloneHost()
+	if err != nil {
+		return nil, fmt.Errorf("detect standalone host: %w", err)
+	}
+	if !found {
+		//nolint:nilnil
+		return nil, nil
+	}
+
+	vConfig, err := vclusterconfig.LoadStandaloneConfig("", nil)
+	if err != nil {
+		return nil, fmt.Errorf("load standalone config: %w", err)
+	}
+	kubeClientConfig, err := getStandaloneKubeClientConfig(vConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	version := standaloneutil.ParseEnvFromSystemdUnit(unitData, "VCLUSTER_VERSION")
+
+	// Use the systemd unit file's modification time as a proxy for cluster creation time.
+	fi, err := os.Stat(constants.VClusterStandaloneSystemdUnitFile)
+	if err != nil {
+		return nil, fmt.Errorf("stat standalone unit file: %w", err)
+	}
+	created := metav1.NewTime(fi.ModTime())
+
+	// Check if the systemd service is actually running.
+	status := StatusUnknown
+	out, err := exec.Command("systemctl", "is-active", constants.VClusterStandaloneSystemdServiceName).Output()
+	if err == nil && strings.TrimSpace(string(out)) == "active" {
+		status = StatusRunning
+	}
+
+	return &VCluster{
+		Name:          vConfig.Name,
+		Namespace:     constants.VClusterStandaloneSnapshotNamespace,
+		ClientFactory: kubeClientConfig,
+		Created:       created,
+		Version:       version,
+		Status:        status,
+		IsStandalone:  true,
+	}, nil
 }
 
 // isVirtualClusterInstanceResourceAvailable checks if VirtualClusterInstance resources from storage.loft.sh/v1 exist

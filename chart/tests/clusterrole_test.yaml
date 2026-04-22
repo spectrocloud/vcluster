@@ -3,10 +3,40 @@ templates:
   - clusterrole.yaml
 
 tests:
-  - it: disable by default
+  - it: disable when volume snapshot rules are disabled
+    set:
+      rbac:
+        enableVolumeSnapshotRules:
+          enabled: false
     asserts:
       - hasDocuments:
           count: 0
+
+  - it: enabled by default with default rules
+    asserts:
+      - hasDocuments:
+          count: 1
+      - contains:
+          path: rules
+          content:
+            apiGroups: [ "" ]
+            resources: [ "persistentvolumes" ]
+            verbs:
+              [ "get", "list" ]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [ "snapshot.storage.k8s.io" ]
+            resources: [ "volumesnapshotclasses" ]
+            verbs:
+              [ "get", "list" ]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [ "snapshot.storage.k8s.io" ]
+            resources: [ "volumesnapshotcontents" ]
+            verbs:
+              [ "create", "delete", "patch", "update", "get", "list" ]
 
   - it: force enable
     set:
@@ -33,24 +63,6 @@ tests:
     asserts:
       - hasDocuments:
           count: 0
-
-  - it: enable isolated control plane
-    set:
-      experimental:
-        isolatedControlPlane:
-          enabled: true
-    asserts:
-      - hasDocuments:
-          count: 1
-      - lengthEqual:
-          path: rules
-          count: 1
-      - contains:
-          path: rules
-          content:
-            apiGroups: [ "" ]
-            resources: [ "nodes" ]
-            verbs: [ "get", "watch", "list" ]
 
   - it: enable scheduler (k8s distro explicitly enabled)
     set:
@@ -103,19 +115,6 @@ tests:
             resources: [ "storageclasses", "csinodes", "csidrivers", "csistoragecapacities" ]
             verbs: [ "get", "watch", "list" ]
 
-  - it: scheduler not enabled for k3s
-    set:
-      controlPlane:
-        distro:
-          k3s:
-            enabled: true
-          k8s:
-            scheduler:
-              enabled: true
-    asserts:
-      - hasDocuments:
-          count: 0
-
   - it: enable hybrid scheduling
     set:
       sync:
@@ -163,7 +162,7 @@ tests:
           count: 1
       - lengthEqual:
           path: rules
-          count: 1
+          count: 4
       - contains:
           path: rules
           content:
@@ -213,7 +212,7 @@ tests:
           count: 1
       - lengthEqual:
           path: rules
-          count: 2
+          count: 5
       - contains:
           path: rules
           content:
@@ -244,7 +243,7 @@ tests:
           count: 1
       - lengthEqual:
           path: rules
-          count: 2
+          count: 5
       - contains:
           path: rules
           content:
@@ -270,7 +269,7 @@ tests:
           count: 1
       - lengthEqual:
           path: rules
-          count: 1
+          count: 4
       - contains:
           path: rules
           content:
@@ -278,7 +277,7 @@ tests:
             resources: [ "services", "endpoints" ]
             verbs: [ "get", "watch", "list" ]
 
-  - it: real nodes
+  - it: real nodes with default proxyKubelets
     set:
       sync:
         fromHost:
@@ -289,13 +288,49 @@ tests:
           count: 1
       - lengthEqual:
           path: rules
-          count: 1
+          count: 5
       - contains:
           path: rules
           content:
             apiGroups: [ "" ]
-            resources: [ "pods", "nodes", "nodes/status", "nodes/metrics", "nodes/stats", "nodes/proxy" ]
+            resources: [ "pods", "nodes", "nodes/status" ]
             verbs: [ "get", "watch", "list" ]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [ "" ]
+            resources: [ "nodes/metrics", "nodes/stats", "nodes/proxy" ]
+            verbs: [ "get" ]
+
+  - it: real nodes without proxyKubelets
+    set:
+      sync:
+        fromHost:
+          nodes:
+            enabled: true
+      networking:
+        advanced:
+          proxyKubelets:
+            byHostname: false
+            byIP: false
+    asserts:
+      - hasDocuments:
+          count: 1
+      - lengthEqual:
+          path: rules
+          count: 4
+      - contains:
+          path: rules
+          content:
+            apiGroups: [ "" ]
+            resources: [ "pods", "nodes", "nodes/status" ]
+            verbs: [ "get", "watch", "list" ]
+      - notContains:
+          path: rules
+          content:
+            apiGroups: [ "" ]
+            resources: [ "nodes/metrics", "nodes/stats", "nodes/proxy" ]
+            verbs: [ "get" ]
 
   - it: virtual scheduler
     set:
@@ -308,7 +343,7 @@ tests:
           count: 1
       - lengthEqual:
           path: rules
-          count: 1
+          count: 4
       - contains:
           path: rules
           content:
@@ -324,12 +359,12 @@ tests:
           count: 1
       - lengthEqual:
           path: rules
-          count: 3
+          count: 6
       - contains:
           path: rules
           content:
             apiGroups: [ "" ]
-            resources: [ "pods", "nodes", "nodes/status", "nodes/metrics", "nodes/stats", "nodes/proxy" ]
+            resources: [ "pods", "nodes", "nodes/status" ]
             verbs: [ "get", "watch", "list" ]
       - contains:
           path: rules
@@ -343,6 +378,12 @@ tests:
             apiGroups: ["management.loft.sh"]
             resources: ["virtualclusterinstances"]
             verbs: ["get"]
+      - notContains:
+          path: rules
+          content:
+            apiGroups: [ "" ]
+            resources: [ "nodes/metrics", "nodes/stats", "nodes/proxy" ]
+            verbs: [ "get" ]
 
   - it: metrics proxy
     set:
@@ -378,7 +419,7 @@ tests:
           count: 1
       - lengthEqual:
           path: rules
-          count: 1
+          count: 4
       - contains:
           path: rules
           content:
@@ -398,7 +439,7 @@ tests:
           count: 1
       - lengthEqual:
           path: rules
-          count: 2
+          count: 5
       - contains:
           path: rules
           content:
@@ -424,7 +465,7 @@ tests:
           count: 1
       - lengthEqual:
           path: rules
-          count: 2
+          count: 5
       - contains:
           path: rules
           content:
@@ -446,7 +487,7 @@ tests:
           count: 1
       - lengthEqual:
           path: rules
-          count: 1
+          count: 4
       - contains:
           path: rules
           content:
@@ -462,6 +503,9 @@ tests:
             test.test-group:
               enabled: true
               scope: Cluster
+            test.test-versioned-group/v1alpha1:
+              enabled: true
+              scope: Cluster
     release:
       name: my-release
       namespace: my-namespace
@@ -470,11 +514,17 @@ tests:
           count: 1
       - lengthEqual:
           path: rules
-          count: 2
+          count: 6
       - contains:
           path: rules
           content:
             apiGroups: [ "test-group" ]
+            resources: [ "test" ]
+            verbs: [ "get", "list", "watch" ]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [ "test-versioned-group" ]
             resources: [ "test" ]
             verbs: [ "get", "list", "watch" ]
       - contains:
@@ -491,8 +541,9 @@ tests:
           webhook:
             enabled: true
           sync:
-            clusterStores:
-              enabled: true
+            fromHost:
+              clusterStores:
+                enabled: true
     release:
       name: my-release
       namespace: my-namespace
@@ -520,7 +571,7 @@ tests:
             enabled: false
     asserts:
       - hasDocuments:
-          count: 0
+          count: 1
 
   - it: fromHost sync configmaps enabled with wildcard namespace
     set:
@@ -537,7 +588,7 @@ tests:
           count: 1
       - lengthEqual:
           path: rules
-          count: 3
+          count: 6
       - contains:
           path: rules
           content:
@@ -573,7 +624,7 @@ tests:
           count: 1
       - lengthEqual:
           path: rules
-          count: 3
+          count: 6
       - contains:
           path: rules
           content:
@@ -609,7 +660,7 @@ tests:
           count: 1
       - lengthEqual:
           path: rules
-          count: 3
+          count: 6
       - contains:
           path: rules
           content:
@@ -639,7 +690,7 @@ tests:
             enabled: false
     asserts:
       - hasDocuments:
-          count: 0
+          count: 1
 
   - it: fromHost sync secrets enabled with wildcard namespace
     set:
@@ -656,7 +707,7 @@ tests:
           count: 1
       - lengthEqual:
           path: rules
-          count: 3
+          count: 6
       - contains:
           path: rules
           content:
@@ -692,7 +743,7 @@ tests:
           count: 1
       - lengthEqual:
           path: rules
-          count: 3
+          count: 6
       - contains:
           path: rules
           content:
@@ -728,7 +779,7 @@ tests:
           count: 1
       - lengthEqual:
           path: rules
-          count: 3
+          count: 6
       - contains:
           path: rules
           content:
@@ -762,10 +813,112 @@ tests:
           count: 1
       - lengthEqual:
           path: rules
-          count: 1
+          count: 4
       - contains:
           path: rules
           content:
             apiGroups: [ "apiextensions.k8s.io" ]
             resources: [ "customresourcedefinitions" ]
             verbs: [ "get", "list", "watch" ]
+
+  - it: volume snapshot rules
+    set:
+      rbac:
+        enableVolumeSnapshotRules:
+          enabled: true
+    release:
+      name: my-release
+      namespace: my-namespace
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: kind
+          value: ClusterRole
+      - contains:
+          path: rules
+          content:
+            apiGroups: [ "" ]
+            resources: [ "persistentvolumes" ]
+            verbs:
+              [ "get", "list" ]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [ "snapshot.storage.k8s.io" ]
+            resources: [ "volumesnapshotclasses" ]
+            verbs:
+              [ "get", "list" ]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [ "snapshot.storage.k8s.io" ]
+            resources: [ "volumesnapshotcontents" ]
+            verbs:
+              [ "create", "delete", "patch", "update", "get", "list" ]
+
+  - it: resourceClaims rules
+    set:
+      sync:
+        toHost:
+          resourceClaims:
+            enabled: true
+    release:
+      name: my-release
+      namespace: my-namespace
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: kind
+          value: ClusterRole
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["resource.k8s.io"]
+            resources: ["deviceclasses"]
+            verbs: ["get", "watch", "list"]
+
+  - it: deviceClasses rules
+    set:
+      sync:
+        fromHost:
+          deviceClasses:
+            enabled: true
+    release:
+      name: my-release
+      namespace: my-namespace
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: kind
+          value: ClusterRole
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["resource.k8s.io"]
+            resources: ["deviceclasses"]
+            verbs: ["get", "watch", "list"]
+
+  - it: resourceClaimTemplates rules
+    set:
+      sync:
+        toHost:
+          resourceClaimTemplates:
+            enabled: true
+    release:
+      name: my-release
+      namespace: my-namespace
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: kind
+          value: ClusterRole
+      - contains:
+          path: rules
+          content:
+            apiGroups: ["resource.k8s.io"]
+            resources: ["deviceclasses"]
+            verbs: ["get", "watch", "list"]
