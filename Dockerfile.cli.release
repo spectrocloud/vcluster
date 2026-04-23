@@ -1,7 +1,7 @@
 # we use alpine for easier debugging
-FROM alpine:3.22
+FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/alpine:3.23-dev
 
-ARG HELM_VERSION="v3.17.3"
+ARG HELM_VERSION="v3.19.2"
 ARG TARGETARCH
 
 # Set root path as working directory

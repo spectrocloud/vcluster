@@ -1,15 +1,15 @@
-ARG KINE_VERSION="v0.13.14"
+ARG KINE_VERSION="v0.14.14"
 FROM rancher/kine:${KINE_VERSION} AS kine
 
 # Build program
-FROM golang:1.24 AS builder
+FROM us-docker.pkg.dev/palette-images/build-base-images/golang:1.25.8-alpine AS builder
 
 WORKDIR /vcluster-dev
 ARG TARGETOS
 ARG TARGETARCH
 ARG BUILD_VERSION=dev
 ARG TELEMETRY_PRIVATE_KEY=""
-ARG HELM_VERSION="v3.17.3"
+ARG HELM_VERSION="v3.19.2"
 
 # Install kubectl for development
 RUN curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/${TARGETARCH}/kubectl && chmod +x ./kubectl && mv ./kubectl /usr/local/bin/kubectl
@@ -57,7 +57,7 @@ RUN --mount=type=cache,id=gomod,target=/go/pkg/mod \
 ENTRYPOINT ["go", "run", "-mod", "vendor", "cmd/vcluster/main.go", "start"]
 
 # we use alpine for easier debugging
-FROM alpine:3.22
+FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/alpine:3.23-dev
 
 # install runtime dependencies
 RUN apk add --no-cache ca-certificates zstd tzdata
