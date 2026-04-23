@@ -7,6 +7,8 @@ ARG TARGETARCH
 # Set root path as working directory
 WORKDIR /
 
+RUN mkdir -p /usr/local/bin
+
 # Add devspace
 RUN wget -O devspace "https://github.com/loft-sh/devspace/releases/latest/download/devspace-linux-${TARGETARCH}" \
 	&& chmod +x devspace \
