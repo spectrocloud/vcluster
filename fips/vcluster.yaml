@@ -58,11 +58,11 @@ sync:
           image:
             # Registry is the registry of the container image, e.g. my-registry.com or ghcr.io. This setting can be globally
             # overridden via the controlPlane.advanced.defaultImageRegistry option. Empty means docker hub.
-            registry: "us-central1-docker.pkg.dev"
+            registry: "us-docker.pkg.dev"
             # Repository is the repository of the container image, e.g. my-repo/my-image
-            repository: palette-images-dev/hardened-images/alpine
+            repository: palette-images-fips/third-party/alpine
             # Tag is the tag of the container image, and is the default version.
-            tag: "3.23-dev"
+            tag: "3.23-fips"
           # Resources are the resources that should be assigned to the init container for each stateful set init container.
           resources:
             # Limits are resource limits for the container
@@ -227,11 +227,11 @@ controlPlane:
       image:
         # Registry is the registry of the container image, e.g. my-registry.com or ghcr.io. This setting can be globally
         # overridden via the controlPlane.advanced.defaultImageRegistry option. Empty means docker hub.
-        registry: ghcr.io
+        registry: us-docker.pkg.dev
         # Repository is the repository of the container image, e.g. my-repo/my-image
-        repository: "loft-sh/kubernetes"
+        repository: "palette-images-fips/third-party/loft/kubernetes"
         # Tag is the tag of the container image, and is the default version.
-        tag: "v1.33.4-fips"
+        tag: "v1.33.4-fips140-3"
       # APIServer holds configuration specific to starting the api server.
       apiServer:
         enabled: true
@@ -350,7 +350,7 @@ controlPlane:
       # Deploy defines to use an external etcd that is deployed by the helm chart
       deploy:
         # Enabled defines that an external etcd should be deployed.
-        enabled: true
+        enabled: false
         # StatefulSet holds options for the external etcd statefulSet.
         statefulSet:
           # Enabled defines if the statefulSet should be deployed
@@ -363,11 +363,11 @@ controlPlane:
           image:
             # Registry is the registry of the container image, e.g. my-registry.com or ghcr.io. This setting can be globally
             # overridden via the controlPlane.advanced.defaultImageRegistry option. Empty means docker hub.
-            registry: "us-east1-docker.pkg.dev"
+            registry: "us-docker.pkg.dev"
             # Repository is the repository of the container image, e.g. my-repo/my-image
-            repository: "spectro-images/dev/vcluster/syedsadathulla/etcd-fips-glibc"
+            repository: "palette-images-fips/k8s/etcd"
             # Tag is the tag of the container image, and is the default version.
-            tag: "v3.5.25"
+            tag: "3.5.24"
           # ImagePullPolicy is the pull policy for the external etcd image
           imagePullPolicy: ""
           # ExtraArgs are appended to the etcd command.
@@ -474,7 +474,7 @@ controlPlane:
       annotations: {}
       labels: {}
       # Image is the coredns image to use
-      image: "us-east1-docker.pkg.dev/spectro-images/dev/syedsadathulla/coredns:v1.12.1-fips140-3-dev"
+      image: us-docker.pkg.dev/palette-images-fips/third-party/vcluster/coredns:v1.14.6-fips140-3
       # Replicas is the amount of coredns pods to run.
       replicas: 1
       # Pods is additional metadata for the coredns pods.
@@ -549,11 +549,11 @@ controlPlane:
     image:
       # Configure the registry of the container image, e.g. my-registry.com or ghcr.io
       # It defaults to ghcr.io and can be overriding either by using this field or controlPlane.advanced.defaultImageRegistry
-      registry: "us-east1-docker.pkg.dev"
+      registry: "us-docker.pkg.dev"
       # Configure the repository of the container image, e.g. my-repo/my-image.
       # It defaults to the vCluster pro repository that includes the optional pro modules that are turned off by default.
       # If you still want to use the pure OSS build, use 'loft-sh/vcluster-oss' instead.
-      repository: "spectro-images/dev/syedsadathulla/vcluster-oss"
+      repository: "palette-images-fips/third-party/vcluster-oss:0.27.3"
       # Tag is the tag of the container image, e.g. latest
       tag: "0.27.3"
     # WorkingDir specifies in what folder the main process should get started.
@@ -984,7 +984,7 @@ external: {}
 # Define which vCluster plugins to load.
 plugin:
   container-resources-sync:
-    image: us-east1-docker.pkg.dev/spectro-images/dev/syedsadathulla/vcluster-upsync-plugin:v0.0.6-fips140-3-dev
+    image: us-docker.pkg.dev/palette-images-fips/palette/vcluster-upsync-plugin:v0.0.7-fips140-3
     imagePullPolicy: IfNotPresent
     version: v2
     resources:
@@ -1040,7 +1040,7 @@ experimental:
               serviceAccountName: vc-{{ .Release.Name }}
               initContainers:
               - name: hostpath-mapper-init
-                image: us-east1-docker.pkg.dev/spectro-images/dev/syedsadathulla/vcluster-hpm:0.2.7-fips140-3-dev
+                image: us-docker.pkg.dev/palette-images-fips/third-party/loft/vcluster-hpm:0.2.7-fips140-3
                 command: ["/vcluster-hpm"]
                 env:
                 - name: POD_NAME
@@ -1060,7 +1060,7 @@ experimental:
                   mountPath: /data/server/tls
               containers:
               - name: hostpath-mapper
-                image: us-east1-docker.pkg.dev/spectro-images/dev/syedsadathulla/vcluster-hpm:0.2.7-fips140-3-dev
+                image: us-docker.pkg.dev/palette-images-fips/third-party/loft/vcluster-hpm:0.2.7-fips140-3
                 command: ["/vcluster-hpm"]
                 env:
                 - name: POD_NAME
