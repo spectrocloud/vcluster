@@ -984,7 +984,7 @@ external: {}
 # Define which vCluster plugins to load.
 plugin:
   container-resources-sync:
-    image: us-docker.pkg.dev/palette-images-fips/palette/vcluster-upsync-plugin:v0.0.7-fips140-3
+    image: us-docker.pkg.dev/palette-images-fips/palette/vcluster-upsync-plugin:v0.0.9-fips140-3
     imagePullPolicy: IfNotPresent
     version: v2
     resources:
