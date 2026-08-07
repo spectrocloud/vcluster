@@ -28,7 +28,11 @@ FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/builder/golan
 ARG TARGETOS
 ARG TARGETARCH
 ARG BUILD_VERSION=0.0.1
-ARG TELEMETRY_PRIVATE_KEY=""
+# NOTE: upstream's Dockerfile also stamps -X ...telemetry.telemetryPrivateKey
+# from a TELEMETRY_PRIVATE_KEY build arg. That symbol no longer exists in this
+# branch's pkg/telemetry, so the flag is a no-op — and a build arg carrying a
+# secret would be recoverable from the image layers, the linked binary and
+# `docker history`. Deliberately not plumbed here; do not re-add it.
 
 WORKDIR /vcluster-dev
 
@@ -52,7 +56,7 @@ RUN RELEASE_VERSION=${BUILD_VERSION} bash hack/embed-chart.sh
 # compile time; no cgo or special linking required.
 RUN CGO_ENABLED=0 GOFIPS140=v1.0.0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -a -mod vendor -tags embed_chart \
-      -ldflags '-X github.com/loft-sh/vcluster/pkg/telemetry.SyncerVersion='"${BUILD_VERSION}"' -X github.com/loft-sh/vcluster/pkg/telemetry.telemetryPrivateKey='"${TELEMETRY_PRIVATE_KEY}"'' \
+      -ldflags '-X github.com/loft-sh/vcluster/pkg/telemetry.SyncerVersion='"${BUILD_VERSION}" \
       -o /vcluster ./cmd/vcluster
 
 FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/alpine:3.23-dev

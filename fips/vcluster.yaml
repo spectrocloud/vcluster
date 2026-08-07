@@ -553,7 +553,7 @@ controlPlane:
       # Configure the repository of the container image, e.g. my-repo/my-image.
       # It defaults to the vCluster pro repository that includes the optional pro modules that are turned off by default.
       # If you still want to use the pure OSS build, use 'loft-sh/vcluster-oss' instead.
-      repository: "palette-images-fips/third-party/vcluster-oss:0.27.3"
+      repository: "palette-images-fips/third-party/vcluster-oss"
       # Tag is the tag of the container image, e.g. latest
       tag: "0.27.3"
     # WorkingDir specifies in what folder the main process should get started.
@@ -738,6 +738,11 @@ controlPlane:
       annotations: {}
 
 # Deploy holds configuration for the deployment of vCluster.
+# This block only renders for private-node clusters, which this reference
+# deployment does not use, so nothing here is active today. None of these addons
+# has a palette-images-fips build yet — anything enabled from this block must
+# have its image pinned to a FIPS reference first, or it will pull an
+# unvalidated upstream image.
 deploy:
   # LocalPathProvisioner holds dedicated local path provisioner configuration.
   localPathProvisioner:
@@ -753,9 +758,13 @@ deploy:
 
   # KubeProxy holds dedicated kube proxy configuration.
   kubeProxy:
-    # Enabled defines if the kube proxy should be enabled.
-    enabled: true
-    # Image is the image for the kube-proxy.
+    # Disabled: there is no palette-images-fips kube-proxy build today, and an
+    # empty `image` falls back to the upstream chart default, which would pull a
+    # non-FIPS binary into the control plane. Pin `image` to a FIPS-hardened
+    # kube-proxy before flipping this back to true.
+    enabled: false
+    # Image is the image for the kube-proxy. Must be a palette-images-fips
+    # reference if kube-proxy is ever enabled here.
     image: ""
     # ImagePullPolicy is the policy how to pull the image.
     imagePullPolicy: ""

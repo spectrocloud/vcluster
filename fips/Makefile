@@ -19,17 +19,28 @@ SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := help
 
 # --- registry / tagging -----------------------------------------------------
-REGISTRY     ?= us-east1-docker.pkg.dev
-IMAGE_PREFIX ?= spectro-images/dev/syedsadathulla
+# The defaults reproduce exactly the references fips/vcluster.yaml consumes, so
+# `make build-all push-all` with no overrides produces the shipping tags.
+#
+# For a personal or dev build, set IMAGE_PREFIX to flatten every image under one
+# scratch namespace instead of the product paths:
+#
+#   make build-all push-all \
+#     REGISTRY=us-east1-docker.pkg.dev \
+#     IMAGE_PREFIX=spectro-images/dev/$USER \
+#     TAG_SUFFIX=fips140-3-dev
+REGISTRY     ?= us-docker.pkg.dev
+IMAGE_PREFIX ?=
 PLATFORM     ?= linux/amd64
-TAG_SUFFIX   ?= fips140-3-dev
+TAG_SUFFIX   ?= fips140-3
 
 # --- component versions -----------------------------------------------------
 # coredns: CVE floor, do not drop below 1.14.6 (see Dockerfile.coredns).
 COREDNS_VERSION ?= 1.14.6
 # hostpath-mapper: upstream's latest tag; v0.2.7 == main HEAD.
 HPM_VERSION     ?= 0.2.7
-UPSYNC_VERSION  ?= v0.0.7
+# upsync plugin: keep in sync with the image in fips/vcluster.yaml.
+UPSYNC_VERSION  ?= v0.0.9
 SYNCER_VERSION  ?= 0.27.3
 
 # --- build inputs -----------------------------------------------------------
@@ -37,19 +48,27 @@ BUILDER_GOLANG_VERSION ?= 1.26.5
 # Leave BASE_IMAGE empty to take each Dockerfile's default. coredns and the
 # hostpath-mapper fall back to gcr.io/distroless/static when it is unset.
 BASE_IMAGE ?=
-TELEMETRY_PRIVATE_KEY ?=
 
 FIPS_DIR   := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 REPO_ROOT  := $(abspath $(FIPS_DIR)/..)
 # Dockerfile.upsync builds from the plugin repo (it COPYs the whole context),
 # so that checkout - not this repo - is the build context.
-UPSYNC_REPO ?= $(abspath $(REPO_ROOT)/../vcluster-container-resource-upsync-plugin)
+UPSYNC_SRC_DIR ?= $(abspath $(REPO_ROOT)/../vcluster-container-resource-upsync-plugin)
 
 # --- image references -------------------------------------------------------
-COREDNS_IMAGE := $(REGISTRY)/$(IMAGE_PREFIX)/coredns:v$(COREDNS_VERSION)-$(TAG_SUFFIX)
-HPM_IMAGE     := $(REGISTRY)/$(IMAGE_PREFIX)/vcluster-hpm:$(HPM_VERSION)-$(TAG_SUFFIX)
-UPSYNC_IMAGE  := $(REGISTRY)/$(IMAGE_PREFIX)/vcluster-upsync-plugin:$(UPSYNC_VERSION)-$(TAG_SUFFIX)
-SYNCER_IMAGE  := $(REGISTRY)/$(IMAGE_PREFIX)/vcluster-oss:$(SYNCER_VERSION)
+# Per-image repository paths, matching fips/vcluster.yaml. Setting IMAGE_PREFIX
+# overrides all of them and puts every image under $(IMAGE_PREFIX)/<name>.
+repo_path     = $(if $(IMAGE_PREFIX),$(IMAGE_PREFIX)/$(2),$(1))
+COREDNS_REPO := $(call repo_path,palette-images-fips/third-party/vcluster/coredns,coredns)
+HPM_REPO     := $(call repo_path,palette-images-fips/third-party/loft/vcluster-hpm,vcluster-hpm)
+UPSYNC_REPO  := $(call repo_path,palette-images-fips/palette/vcluster-upsync-plugin,vcluster-upsync-plugin)
+SYNCER_REPO  := $(call repo_path,palette-images-fips/third-party/vcluster-oss,vcluster-oss)
+
+COREDNS_IMAGE := $(REGISTRY)/$(COREDNS_REPO):v$(COREDNS_VERSION)-$(TAG_SUFFIX)
+HPM_IMAGE     := $(REGISTRY)/$(HPM_REPO):$(HPM_VERSION)-$(TAG_SUFFIX)
+UPSYNC_IMAGE  := $(REGISTRY)/$(UPSYNC_REPO):$(UPSYNC_VERSION)-$(TAG_SUFFIX)
+# The syncer ships under the plain upstream version tag, no suffix.
+SYNCER_IMAGE  := $(REGISTRY)/$(SYNCER_REPO):$(SYNCER_VERSION)
 
 ALL_IMAGES := $(COREDNS_IMAGE) $(HPM_IMAGE) $(UPSYNC_IMAGE) $(SYNCER_IMAGE)
 
@@ -88,21 +107,20 @@ build-hpm: ## Build the vcluster-hostpath-mapper FIPS image
 
 .PHONY: build-upsync
 build-upsync: ## Build the upsync plugin FIPS image (context: the plugin repo)
-	@test -d "$(UPSYNC_REPO)" || { \
-	  echo "error: UPSYNC_REPO not found: $(UPSYNC_REPO)"; \
-	  echo "       pass UPSYNC_REPO=/path/to/vcluster-container-resource-upsync-plugin"; \
+	@test -d "$(UPSYNC_SRC_DIR)" || { \
+	  echo "error: UPSYNC_SRC_DIR not found: $(UPSYNC_SRC_DIR)"; \
+	  echo "       pass UPSYNC_SRC_DIR=/path/to/vcluster-container-resource-upsync-plugin"; \
 	  exit 1; }
 	$(DOCKER_BUILD) -f $(FIPS_DIR)/Dockerfile.upsync \
 	  --build-arg BUILDER_GOLANG_VERSION=$(BUILDER_GOLANG_VERSION) \
 	  --build-arg CRYPTO_LIB=fips \
-	  -t $(UPSYNC_IMAGE) $(UPSYNC_REPO)
+	  -t $(UPSYNC_IMAGE) $(UPSYNC_SRC_DIR)
 
 .PHONY: build-syncer
 build-syncer: ## Build the vcluster syncer FIPS image
 	$(DOCKER_BUILD) -f $(FIPS_DIR)/Dockerfile.syncfips \
 	  --build-arg BUILDER_GOLANG_VERSION=$(BUILDER_GOLANG_VERSION) \
 	  --build-arg BUILD_VERSION=$(SYNCER_VERSION) \
-	  $(if $(TELEMETRY_PRIVATE_KEY),--build-arg TELEMETRY_PRIVATE_KEY=$(TELEMETRY_PRIVATE_KEY),) \
 	  -t $(SYNCER_IMAGE) $(REPO_ROOT)
 
 # --- push -------------------------------------------------------------------
@@ -129,9 +147,10 @@ SEVERITY ?= critical,high
 
 .PHONY: scan-all
 scan-all: ## bulwark crit/high scan of every image
-	@for img in $(ALL_IMAGES); do \
+	@set -euo pipefail; \
+	for img in $(ALL_IMAGES); do \
 	  echo "=== $$img ==="; \
-	  $(BULWARK) image --severity $(SEVERITY) $$img || exit $$?; \
+	  $(BULWARK) image --severity $(SEVERITY) $$img; \
 	done
 
 # image:binary pairs to check. The syncer carries kine and helm too - both are
@@ -146,16 +165,19 @@ VERIFY_TARGETS := \
 
 .PHONY: verify-all
 verify-all: ## Assert each shipped binary is a GOFIPS140 build (works on distroless)
-	@rc=0; tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+	@set -euo pipefail; \
+	rc=0; tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
 	for spec in $(VERIFY_TARGETS); do \
 	  img=$${spec%:*}; bin=$${spec##*:}; \
-	  cid=$$($(DOCKER) create --platform $(PLATFORM) "$$img") || { rc=1; continue; }; \
-	  $(DOCKER) cp "$$cid:$$bin" "$$tmp/b" >/dev/null 2>&1; cp_rc=$$?; \
+	  if ! cid=$$($(DOCKER) create --platform $(PLATFORM) "$$img"); then \
+	    echo "FAIL  $$img (docker create failed)"; rc=1; continue; fi; \
+	  cp_rc=0; \
+	  $(DOCKER) cp "$$cid:$$bin" "$$tmp/b" >/dev/null 2>&1 || cp_rc=$$?; \
 	  $(DOCKER) rm -f "$$cid" >/dev/null 2>&1 || true; \
-	  if [ $$cp_rc -ne 0 ]; then echo "FAIL  $$img $$bin (not found)"; rc=1; continue; fi; \
-	  info=$$(go version -m "$$tmp/b" 2>/dev/null); \
-	  fips=$$(echo "$$info" | grep -o 'GOFIPS140=[^[:space:]]*' | head -1); \
-	  gover=$$(echo "$$info" | head -1 | awk '{print $$2}'); \
+	  if [ "$$cp_rc" -ne 0 ]; then echo "FAIL  $$img $$bin (not found)"; rc=1; continue; fi; \
+	  info=$$(go version -m "$$tmp/b" 2>/dev/null) || info=''; \
+	  fips=$$(printf '%s\n' "$$info" | grep -o 'GOFIPS140=[^[:space:]]*' | head -1 || true); \
+	  gover=$$(printf '%s\n' "$$info" | head -1 | awk '{print $$2}'); \
 	  if [ -n "$$fips" ]; then echo "ok    $$img $$bin ($$gover, $$fips)"; \
 	  else echo "FAIL  $$img $$bin ($$gover, no GOFIPS140)"; rc=1; fi; \
 	  rm -f "$$tmp/b"; \

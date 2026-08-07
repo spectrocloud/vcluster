@@ -34,3 +34,5 @@ WORKDIR /
 RUN mkdir -p /plugin
 
 COPY --from=builder /plugin /plugin/plugin
+
+ENTRYPOINT ["/plugin/plugin"]
