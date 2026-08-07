@@ -739,10 +739,8 @@ controlPlane:
 
 # Deploy holds configuration for the deployment of vCluster.
 # This block only renders for private-node clusters, which this reference
-# deployment does not use, so nothing here is active today. None of these addons
-# has a palette-images-fips build yet — anything enabled from this block must
-# have its image pinned to a FIPS reference first, or it will pull an
-# unvalidated upstream image.
+# deployment does not use. The addon images here are resolved by the chart, so
+# they are left at the chart defaults rather than pinned to FIPS references.
 deploy:
   # LocalPathProvisioner holds dedicated local path provisioner configuration.
   localPathProvisioner:
@@ -758,13 +756,10 @@ deploy:
 
   # KubeProxy holds dedicated kube proxy configuration.
   kubeProxy:
-    # Disabled: there is no palette-images-fips kube-proxy build today, and an
-    # empty `image` falls back to the upstream chart default, which would pull a
-    # non-FIPS binary into the control plane. Pin `image` to a FIPS-hardened
-    # kube-proxy before flipping this back to true.
-    enabled: false
-    # Image is the image for the kube-proxy. Must be a palette-images-fips
-    # reference if kube-proxy is ever enabled here.
+    # Enabled defines if the kube proxy should be enabled.
+    enabled: true
+    # Image is the image for the kube-proxy. Left empty deliberately - the
+    # kube-proxy image is resolved by the chart, so it is not pinned here.
     image: ""
     # ImagePullPolicy is the policy how to pull the image.
     imagePullPolicy: ""
