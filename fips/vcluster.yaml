@@ -738,9 +738,6 @@ controlPlane:
       annotations: {}
 
 # Deploy holds configuration for the deployment of vCluster.
-# This block only renders for private-node clusters, which this reference
-# deployment does not use. The addon images here are resolved by the chart, so
-# they are left at the chart defaults rather than pinned to FIPS references.
 deploy:
   # LocalPathProvisioner holds dedicated local path provisioner configuration.
   localPathProvisioner:
@@ -758,8 +755,7 @@ deploy:
   kubeProxy:
     # Enabled defines if the kube proxy should be enabled.
     enabled: true
-    # Image is the image for the kube-proxy. Left empty deliberately - the
-    # kube-proxy image is resolved by the chart, so it is not pinned here.
+    # Image is the image for the kube-proxy.
     image: ""
     # ImagePullPolicy is the policy how to pull the image.
     imagePullPolicy: ""
