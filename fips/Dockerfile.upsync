@@ -1,6 +1,6 @@
 # Build the manager binary
 ARG BUILDER_GOLANG_VERSION=1.26.5
-FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/builder/golang:${BUILDER_GOLANG_VERSION}-alpine as builder
+FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/builder/golang:${BUILDER_GOLANG_VERSION}-alpine AS builder
 
 ARG CRYPTO_LIB
 
@@ -18,7 +18,7 @@ RUN go mod download
 RUN if [ "${CRYPTO_LIB}" ]; then \
         CGO_ENABLED=0 GOFIPS140=v1.0.0 go build -a -mod=mod -o /plugin . ; \
     else \
-        CGO_ENABLED=0 GO111MODULE=on go build -mod=mod -o /plugin main.go; \
+        CGO_ENABLED=0 GO111MODULE=on go build -mod=mod -o /plugin . ; \
     fi
 
 # hardened runtime base

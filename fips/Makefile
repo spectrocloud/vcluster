@@ -10,10 +10,10 @@
 #   make verify-all                # assert the binaries are GOFIPS140 builds
 #   make print-images              # list the fully-qualified tags
 #
-# Auth for push: the registry is served by the gcloud credential helper. Pushes
-# need an account with artifactregistry.repositories.uploadArtifacts, e.g.
-# artifact-spectro-images-push@spectro-images.iam.gserviceaccount.com. See the
-# docker-auth target.
+# Auth for push: the registry is served by the gcloud credential helper (see the
+# docker-auth target). Pushes need an account holding
+# artifactregistry.repositories.uploadArtifacts on the target registry - ask
+# DevOps for the push service account rather than hardcoding one here.
 
 SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := help
