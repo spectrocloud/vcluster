@@ -39,7 +39,9 @@ WORKDIR /vcluster-dev
 # Copy the Go Modules manifests
 COPY go.mod go.mod
 COPY go.sum go.sum
-COPY vendor/ vendor/
+
+# Dependencies are fetched from the module proxy; this repo does not vendor.
+RUN go mod download
 
 # Copy the go source
 COPY cmd/vcluster cmd/vcluster
@@ -55,7 +57,7 @@ RUN RELEASE_VERSION=${BUILD_VERSION} bash hack/embed-chart.sh
 # FIPS 140-3: GOFIPS140 selects the validated Go Cryptographic Module at
 # compile time; no cgo or special linking required.
 RUN CGO_ENABLED=0 GOFIPS140=v1.0.0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -a -mod vendor -tags embed_chart \
+    go build -a -mod=mod -tags embed_chart \
       -ldflags '-X github.com/loft-sh/vcluster/pkg/telemetry.SyncerVersion='"${BUILD_VERSION}" \
       -o /vcluster ./cmd/vcluster
 

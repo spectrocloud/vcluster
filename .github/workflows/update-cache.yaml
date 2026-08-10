@@ -44,4 +44,4 @@ jobs:
           # Build cli
           TELEMETRY_PRIVATE_KEY="" goreleaser build --single-target --snapshot --id vcluster-cli --clean --output ./vcluster
           # Build tests for cache
-          go test -mod=vendor -test.v -c ./test/e2e
+          go test -mod=mod -test.v -c ./test/e2e

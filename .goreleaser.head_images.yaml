@@ -21,8 +21,7 @@ builds:
     dir: .
     flags:
       - -trimpath
-      - -mod
-      - vendor
+      - -mod=mod
     tags:
       - embed_chart
     ldflags:
@@ -44,8 +43,7 @@ builds:
     dir: .
     flags:
       - -trimpath
-      - -mod
-      - vendor
+      - -mod=mod
     tags:
       - embed_chart
     ldflags:
