@@ -22,7 +22,7 @@ env:
 
 jobs:
   detect_changes:
-    uses: loft-sh/github-actions/.github/workflows/detect-changes.yaml@v1
+    uses: loft-sh/github-actions/.github/workflows/detect-changes.yaml@964b5ff3d04e8ffabaf1d97403912449483e022f # v1
     with:
       paths: |
         - "go.mod"
@@ -41,19 +41,20 @@ jobs:
     needs: detect_changes
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
       - run: git fetch --force --tags
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
+          cache: false
           go-version-file: go.mod
 
       - name: Setup GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
           install-only: true
           version: latest
@@ -71,14 +72,14 @@ jobs:
           go test -mod=mod -test.v -c ./test/e2e || { echo "go test build failed"; exit 1; }
 
       - name: Upload syncer image to artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: vcluster_syncer
           path: ./vcluster_syncer
           retention-days: 7
 
       - name: Upload vcluster cli to artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: vcluster
           path: ./vcluster
@@ -90,7 +91,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - id: set-paths-matrix
         run: |
           set -x
@@ -109,15 +110,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
         name: Setup Helm
         with:
           version: "v3.11.0"
 
       - name: Set up kind k8s cluster
-        uses: loft-sh/setup-kind@master
+        uses: loft-sh/setup-kind@48548c125e7095cb4ef34e1d572e302cf8cafd44 # master
         with:
           version: "v0.29.0"
           image: kindest/node:v1.33.1@sha256:050072256b9a903bd914c0b2866828150cb229cea0efe5892e2b644d5dd3b34f
@@ -132,12 +133,12 @@ jobs:
           echo "KUBECONFIG env var: ${KUBECONFIG}"
 
       - name: Download vcluster cli
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: vcluster
 
       - name: Download syncer image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: vcluster_syncer
 
@@ -166,7 +167,7 @@ jobs:
         run: |
           curl -L -o vcluster-current "https://github.com/loft-sh/vcluster/releases/latest/download/vcluster-linux-amd64"
       - name: Upload vcluster cli to artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: vcluster-current
           path: ./vcluster-current
@@ -186,15 +187,15 @@ jobs:
         distribution: ["k3s", "k8s"]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
         name: Setup Helm
         with:
           version: "v3.11.0"
 
       - name: Set up kind k8s cluster
-        uses: loft-sh/setup-kind@master
+        uses: loft-sh/setup-kind@48548c125e7095cb4ef34e1d572e302cf8cafd44 # master
         with:
           version: "v0.29.0"
           image: kindest/node:v1.33.1@sha256:050072256b9a903bd914c0b2866828150cb229cea0efe5892e2b644d5dd3b34f
@@ -209,18 +210,18 @@ jobs:
           echo "KUBECONFIG env var: ${KUBECONFIG}"
 
       - name: Download vcluster cli
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: vcluster
           path: vcluster-dev
 
       - name: Download current cli
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: vcluster-current
 
       - name: Download syncer image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: vcluster_syncer
 
@@ -292,20 +293,21 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
+          cache: false
           go-version-file: go.mod
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
         name: Setup Helm
         with:
           version: "v3.11.0"
 
       - name: Set up kind k8s cluster
-        uses: loft-sh/setup-kind@master
+        uses: loft-sh/setup-kind@48548c125e7095cb4ef34e1d572e302cf8cafd44 # master
         with:
           version: "v0.29.0"
           image: kindest/node:v1.33.1@sha256:050072256b9a903bd914c0b2866828150cb229cea0efe5892e2b644d5dd3b34f
@@ -320,12 +322,12 @@ jobs:
           echo "KUBECONFIG env var: ${KUBECONFIG}"
 
       - name: Download vcluster cli
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: vcluster
 
       - name: Download syncer image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: vcluster_syncer
 

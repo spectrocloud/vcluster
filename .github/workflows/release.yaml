@@ -28,28 +28,28 @@ jobs:
           sudo rm -rf /usr/local/lib/android || true
           sudo rm -rf /opt/hostedtoolcache/CodeQL || true
           sudo docker image prune --all --force || true
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
       - run: git fetch --force --tags
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           cache: false
           go-version-file: go.mod
       - name: Setup Just
-        uses: extractions/setup-just@v2
+        uses: extractions/setup-just@dd310ad5a97d8e7b41793f8ef055398d51ad4de6 # v2
       - name: Setup Cosgin
-        uses: sigstore/cosign-installer@main
+        uses: sigstore/cosign-installer@874852de93c66509b01dc7cd80f7a5385182d017 # main
         with:
           cosign-release: "v2.2.3"
       - name: Setup Syft
-        uses: anchore/sbom-action/download-syft@v0.20.4
+        uses: anchore/sbom-action/download-syft@7b36ad622f042cab6f59a75c2ac24ccb256e9b45 # v0.20.4
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - uses: azure/setup-helm@v4
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
         with:
           version: "v3.0.2"
       - id: get_version
@@ -59,7 +59,7 @@ jobs:
           echo "previous_tag=$(git describe --abbrev=0 --tags "$(git rev-list --tags --skip=1 --max-count=1)")" >> "$GITHUB_OUTPUT"
       - name: Validate semver
         id: semver
-        uses: loft-sh/github-actions/.github/actions/semver-validation@semver-validation/v1
+        uses: loft-sh/github-actions/.github/actions/semver-validation@6b5890feaccd82f7c0999ccf10a425cd0844dee0 # semver-validation/v1
         with:
           version: ${{ steps.get_version.outputs.release_version }}
       - name: Check if release would downgrade homebrew tap
@@ -100,17 +100,17 @@ jobs:
             echo "skip_homebrew=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Login to DockerHub
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Login to ghcr.io
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: "goreleaser/goreleaser-action@v6"
+      - uses: "goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a" # v6
         with:
           args: release --clean --timeout 60m ${{ steps.check_latest_stable.outputs.skip_homebrew == 'true' && '--skip=homebrew' || '' }}
           version: "~> v2"
@@ -120,24 +120,27 @@ jobs:
           GORELEASER_CURRENT_TAG: ${{ steps.get_version.outputs.release_version }}
           GORELEASER_PREVIOUS_TAG: ${{ steps.get_version.outputs.previous_tag }}
       - name: Save release assets
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-assets
           path: release/
       - name: Attach assets to release
-        uses: FabianKramm/release-asset-action@v1
+        uses: FabianKramm/release-asset-action@6a964e8a644f28832c3f9a46abc69dda52fc6d17 # v1
         with:
           pattern: "release/*"
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Trigger cli-docs workflow
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         continue-on-error: true
+        env:
+          RELEASE_VERSION: ${{ steps.get_version.outputs.release_version }}
+          GITHUB_REF_NAME_FULL: ${{ github.ref }}
         with:
           github-token: ${{ secrets.GH_ACCESS_TOKEN }}
           script: |
-            const version = '${{ steps.get_version.outputs.release_version }}';
-            const ref = '${{ github.ref }}';
+            const version = process.env.RELEASE_VERSION;
+            const ref = process.env.GITHUB_REF_NAME_FULL;
             // Using repository_dispatch instead of workflow_dispatch
             const response = await github.rest.repos.createDispatchEvent({
               owner: 'loft-sh',
@@ -167,9 +170,10 @@ jobs:
       - publish-chart
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
+          cache: false
           go-version-file: go.mod
       - name: Update linear issues
         run: go run . -release-tag="${{ needs.publish.outputs.release_version }}"
