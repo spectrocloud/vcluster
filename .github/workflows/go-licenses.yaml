@@ -20,10 +20,10 @@ jobs:
 
     steps:
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@7b8cf10d4e4a01d4992d18a89f4d7dc5a3e6d6f4 # v4
         with:
           go-version-file: go.mod
 
@@ -35,7 +35,7 @@ jobs:
         run: go-licenses report ./... > docs/pages/licenses/vcluster.mdx --template .github/licenses.tmpl --ignore github.com/loft-sh
 
       - name: Create pull request
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
         with:
           token: ${{ secrets.GH_ACCESS_TOKEN }}
           committer: Loft Bot <loft-bot@users.noreply.github.com>

@@ -28,7 +28,9 @@ COPY --from=kine /bin/kine /usr/local/bin/kine
 # Copy the Go Modules manifests
 COPY go.mod go.mod
 COPY go.sum go.sum
-COPY vendor/ vendor/
+
+# Dependencies are fetched from the module proxy; this repo does not vendor.
+RUN go mod download
 
 # Copy the go source
 COPY cmd/vcluster cmd/vcluster
@@ -51,12 +53,12 @@ ENV HOME=/
 # Build cmd
 RUN --mount=type=cache,id=gomod,target=/go/pkg/mod \
 	--mount=type=cache,id=gobuild,target=/.cache/go-build \
-	CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GO111MODULE=on go build -mod vendor -ldflags "-X github.com/loft-sh/vcluster/pkg/telemetry.SyncerVersion=$BUILD_VERSION -X github.com/loft-sh/vcluster/pkg/telemetry.telemetryPrivateKey=$TELEMETRY_PRIVATE_KEY" -o /vcluster cmd/vcluster/main.go
+	CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GO111MODULE=on go build -mod=mod -ldflags "-X github.com/loft-sh/vcluster/pkg/telemetry.SyncerVersion=$BUILD_VERSION -X github.com/loft-sh/vcluster/pkg/telemetry.telemetryPrivateKey=$TELEMETRY_PRIVATE_KEY" -o /vcluster cmd/vcluster/main.go
 
 # RUN useradd -u 12345 nonroot
 # USER nonroot
 
-ENTRYPOINT ["go", "run", "-mod", "vendor", "cmd/vcluster/main.go", "start"]
+ENTRYPOINT ["go", "run", "-mod=mod", "cmd/vcluster/main.go", "start"]
 
 # we use alpine for easier debugging
 FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/alpine:3.23-dev

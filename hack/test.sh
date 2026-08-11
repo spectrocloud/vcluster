@@ -2,7 +2,7 @@
 
 # Set required go flags
 export GO111MODULE=on
-export GOFLAGS=-mod=vendor
+export GOFLAGS=-mod=mod
 
 # Test if we can build the program
 echo "Building virtual cluster..."

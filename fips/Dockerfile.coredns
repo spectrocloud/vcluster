@@ -1,0 +1,30 @@
+ARG BUILDER_GOLANG_VERSION=1.26.5
+ARG BASE_IMAGE
+
+# FIPS 140-3 build of CoreDNS with the Go Cryptographic Module v1.0.0
+# (GOFIPS140, NIST CMVP cert #4985)
+FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/builder/golang:${BUILDER_GOLANG_VERSION}-alpine AS builder
+
+WORKDIR /workspace
+
+# CVE floor: do not build below v1.14.6. v1.12.1 carried 30 crit/high, 9 of them
+# in CoreDNS itself (incl. CVE-2026-35579, critical); the rest were its stale
+# x/crypto, x/net, x/text, grpc, quic-go and expr pins. v1.14.6 clears all but
+# GHSA-hrxh-6v49-42gf (grpc 1.82.0, needs 1.82.1) and CVE-2026-56852
+# (x/text 0.38.0, needs 0.39.0), which are upstream's own pins - accepted.
+ARG VERSION=1.14.6
+
+RUN git -c advice.detachedHead=false clone -b v${VERSION} --depth=1 https://github.com/coredns/coredns.git
+
+WORKDIR /workspace/coredns
+
+RUN CGO_ENABLED=0 GOFIPS140=v1.0.0 go build -a -o /coredns .
+
+FROM ${BASE_IMAGE:-gcr.io/distroless/static:nonroot}
+# Enforce FIPS 140-3 mode at runtime
+ENV GODEBUG=fips140=on
+COPY --from=builder /coredns /coredns
+USER 65532:65532
+EXPOSE 53 53/udp
+
+ENTRYPOINT ["/coredns"]

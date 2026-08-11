@@ -10,7 +10,9 @@ RUN curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/s
 # Copy the Go Modules manifests
 COPY go.mod go.mod
 COPY go.sum go.sum
-COPY vendor/ vendor/
+
+# Dependencies are fetched from the module proxy; this repo does not vendor.
+RUN go mod download
 
 # Copy the go source
 COPY cmd/vclusterctl cmd/vclusterctl
@@ -30,7 +32,7 @@ RUN mkdir -p /.cache
 ENV GOCACHE=/.cache
 
 # Build cmd
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GO111MODULE=on go build -mod vendor -tags embed_chart -o /vcluster cmd/vclusterctl/main.go
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GO111MODULE=on go build -mod=mod -tags embed_chart -o /vcluster cmd/vclusterctl/main.go
 
 # we use alpine for easier debugging
 FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/alpine:3.23-dev

@@ -1,0 +1,28 @@
+ARG BUILDER_GOLANG_VERSION=1.26.5
+ARG BASE_IMAGE
+
+# Build the vcluster hostpath-mapper binary (FIPS)
+FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/builder/golang:${BUILDER_GOLANG_VERSION}-alpine AS builder
+
+WORKDIR /workspace
+
+ARG VERSION
+
+RUN git -c advice.detachedHead=false clone -b v${VERSION} --depth=1 https://github.com/loft-sh/vcluster-hostpath-mapper.git
+
+WORKDIR /workspace/vcluster-hostpath-mapper
+
+# FIPS 140-3 build with the Go Cryptographic Module v1.0.0 (GOFIPS140,
+# CMVP #4985). Upstream vendors dependencies.
+RUN CGO_ENABLED=0 GOFIPS140=v1.0.0 go build -a -mod vendor -o /vcluster-hpm ./cmd
+
+FROM ${BASE_IMAGE:-gcr.io/distroless/static:latest}
+WORKDIR /
+# Enforce FIPS 140-3 mode at runtime
+ENV GODEBUG=fips140=on
+# Must run as root: hpm creates dirs/symlinks under hostPath-mounted /var/log,
+# /tmp/vcluster and kubelet paths (the :nonroot base tag would set UID 65532).
+USER 0:0
+COPY --from=builder /vcluster-hpm /vcluster-hpm
+
+ENTRYPOINT ["/vcluster-hpm"]

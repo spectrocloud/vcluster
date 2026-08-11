@@ -20,14 +20,15 @@ jobs:
   notify_release:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           ref: ${{ inputs.ref }}
       - id: get_base_branch
         name: Get base branch for tag
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
         run: |
-          RELEASE_VERSION="${{ inputs.release_version }}"
           TAG_COMMIT=$(git rev-list -n 1 "$RELEASE_VERSION")
 
           # Find all remote branches containing this commit
@@ -59,7 +60,7 @@ jobs:
           echo "base_branch=$BASE_BRANCH" >> "$GITHUB_OUTPUT"
           echo "Base branch for $RELEASE_VERSION: $BASE_BRANCH (distance: $BEST_DISTANCE)"
       - name: Notify #product-releases Slack channel
-        uses: loft-sh/github-actions/.github/actions/release-notification@v1
+        uses: loft-sh/github-actions/.github/actions/release-notification@964b5ff3d04e8ffabaf1d97403912449483e022f # v1
         with:
           version: ${{ inputs.release_version }}
           previous_tag: ${{ inputs.previous_tag }}

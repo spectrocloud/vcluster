@@ -17,20 +17,24 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
       - run: git fetch --force --tags
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        # zizmor: ignore[cache-poisoning]
+        # Populating the Go build/module cache is the entire purpose of this
+        # workflow, so `cache: false` cannot apply here. It runs only on pushes
+        # to main (no fork/PR input) and publishes no release artifact.
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         id: cache
         with:
           go-version-file: go.mod
 
       - name: Setup GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
           install-only: true
           version: latest
@@ -44,4 +48,4 @@ jobs:
           # Build cli
           TELEMETRY_PRIVATE_KEY="" goreleaser build --single-target --snapshot --id vcluster-cli --clean --output ./vcluster
           # Build tests for cache
-          go test -mod=vendor -test.v -c ./test/e2e
+          go test -mod=mod -test.v -c ./test/e2e
