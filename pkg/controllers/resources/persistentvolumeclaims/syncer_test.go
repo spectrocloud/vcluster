@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/loft-sh/vcluster/pkg/config"
+	"github.com/loft-sh/vcluster/pkg/mappings"
 	"github.com/loft-sh/vcluster/pkg/syncer/synccontext"
 	syncertesting "github.com/loft-sh/vcluster/pkg/syncer/testing"
 	testingutil "github.com/loft-sh/vcluster/pkg/util/testing"
@@ -351,6 +352,68 @@ func TestSync(t *testing.T) {
 				assert.NilError(t, err)
 
 				_, err = syncer.(*persistentVolumeClaimSyncer).Sync(syncCtx, synccontext.NewSyncEvent(pPVC.DeepCopy(), vPVC.DeepCopy()))
+				assert.NilError(t, err)
+			},
+		},
+		{
+			// Regression test for https://github.com/loft-sh/vcluster/pull/3889 (resolves #3810):
+			// a PVC with an explicit volumeName pointing at a PV that was already synced from/to
+			// the host (and therefore has a recorded virtual->host name mapping) must keep the
+			// PV's real host name unchanged, instead of mangling it via HostNameCluster().
+			Name: "Create forward keeps real host name for volumeName referencing an already-mapped PV",
+			AdjustConfig: func(vConfig *config.VirtualClusterConfig) {
+				vConfig.Sync.ToHost.PersistentVolumes.Enabled = true
+			},
+			InitialVirtualState: []runtime.Object{
+				&corev1.PersistentVolumeClaim{
+					ObjectMeta: vObjectMeta,
+					Spec: corev1.PersistentVolumeClaimSpec{
+						VolumeName: "existing-vpv",
+					},
+				},
+			},
+			ExpectedVirtualState: map[schema.GroupVersionKind][]runtime.Object{
+				corev1.SchemeGroupVersion.WithKind("PersistentVolumeClaim"): {
+					&corev1.PersistentVolumeClaim{
+						ObjectMeta: vObjectMeta,
+						Spec: corev1.PersistentVolumeClaimSpec{
+							VolumeName: "existing-vpv",
+						},
+					},
+				},
+			},
+			ExpectedPhysicalState: map[schema.GroupVersionKind][]runtime.Object{
+				corev1.SchemeGroupVersion.WithKind("PersistentVolumeClaim"): {
+					&corev1.PersistentVolumeClaim{
+						ObjectMeta: pObjectMeta,
+						Spec: corev1.PersistentVolumeClaimSpec{
+							VolumeName: "existing-real-host-pv",
+						},
+					},
+				},
+			},
+			Sync: func(ctx *synccontext.RegisterContext) {
+				syncCtx, syncer := syncertesting.FakeStartSyncer(t, ctx, New)
+
+				// simulate a PV that was already synced from/to the host, which records its
+				// virtual<->host name mapping in the store (this is what happens the first
+				// time any PV goes through the persistentvolumes syncer, regardless of
+				// whether it originated on the host or inside the vcluster).
+				pvMapping := synccontext.NameMapping{
+					GroupVersionKind: mappings.PersistentVolumes(),
+					VirtualName:      types.NamespacedName{Name: "existing-vpv"},
+					HostName:         types.NamespacedName{Name: "existing-real-host-pv"},
+				}
+				err := syncCtx.Mappings.Store().AddReferenceAndSave(syncCtx, pvMapping, pvMapping)
+				assert.NilError(t, err)
+
+				vPvc := &corev1.PersistentVolumeClaim{
+					ObjectMeta: vObjectMeta,
+					Spec: corev1.PersistentVolumeClaimSpec{
+						VolumeName: "existing-vpv",
+					},
+				}
+				_, err = syncer.(*persistentVolumeClaimSyncer).SyncToHost(syncCtx, synccontext.NewSyncToHostEvent(vPvc))
 				assert.NilError(t, err)
 			},
 		},
