@@ -2,7 +2,7 @@ ARG KINE_VERSION="v0.13.14"
 FROM rancher/kine:${KINE_VERSION} AS kine
 
 # Build program
-FROM golang:1.24 AS builder
+FROM golang:1.25.13 AS builder
 
 WORKDIR /vcluster-dev
 ARG TARGETOS
@@ -18,7 +18,7 @@ RUN curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s
 RUN curl -s https://get.helm.sh/helm-${HELM_VERSION}-linux-${TARGETARCH}.tar.gz > helm3.tar.gz && tar -zxvf helm3.tar.gz linux-${TARGETARCH}/helm && chmod +x linux-${TARGETARCH}/helm && mv linux-${TARGETARCH}/helm /usr/local/bin/helm && rm helm3.tar.gz && rm -R linux-${TARGETARCH}
 
 # Install Delve for debugging
-RUN if [ "${TARGETARCH}" = "amd64" ] || [ "${TARGETARCH}" = "arm64" ]; then go install github.com/go-delve/delve/cmd/dlv@latest; fi
+RUN if [ "${TARGETARCH}" = "amd64" ] || [ "${TARGETARCH}" = "arm64" ]; then go install github.com/go-delve/delve/cmd/dlv@v1.27.1; fi
 
 # Install kine
 COPY --from=kine /bin/kine /usr/local/bin/kine
