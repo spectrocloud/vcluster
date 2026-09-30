@@ -1,0 +1,52 @@
+ARG BUILDER_GOLANG_VERSION=1.26.5
+ARG BASE_IMAGE
+
+# Build the vcluster hostpath-mapper binary. Same CRYPTO_LIB convention as
+# Dockerfile.syncfips / Dockerfile.upsync:
+#   FIPS:     --build-arg CRYPTO_LIB=fips
+#   non-FIPS: CRYPTO_LIB unset
+FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/builder/golang:${BUILDER_GOLANG_VERSION}-alpine AS builder
+
+WORKDIR /workspace
+
+ARG VERSION
+
+RUN git -c advice.detachedHead=false clone -b v${VERSION} --depth=1 https://github.com/loft-sh/vcluster-hostpath-mapper.git
+
+WORKDIR /workspace/vcluster-hostpath-mapper
+
+# Build against this repo's vcluster source. The Makefile passes the repo root
+# as the "vcluster-src" build context (VCLUSTER_SRC=local, the default), or an
+# empty directory (VCLUSTER_SRC=upstream) to keep the module version pinned in
+# go.mod. go mod tidy re-resolves the dependency graph against the replaced
+# module, so it also picks up the vcluster repo's dependency versions.
+COPY --from=vcluster-src . /vcluster-src
+RUN if [ -f /vcluster-src/go.mod ]; then \
+        go mod edit -replace github.com/loft-sh/vcluster=/vcluster-src && \
+        go mod tidy && \
+        echo "building against vcluster source: $(head -1 /vcluster-src/go.mod)"; \
+    else \
+        echo "building against pinned module: $(grep 'loft-sh/vcluster ' go.mod)"; \
+    fi
+
+ARG CRYPTO_LIB
+
+# CRYPTO_LIB set -> FIPS 140-3 build with the Go Cryptographic Module v1.0.0
+# (GOFIPS140, CMVP #4985); unset -> regular build against the standard Go
+# crypto library. Upstream vendors dependencies; with a replaced vcluster the
+# vendor dir is stale, so build from the module graph instead.
+RUN if [ -n "${CRYPTO_LIB}" ]; then export GOFIPS140=v1.0.0; fi && \
+    if [ -f /vcluster-src/go.mod ]; then mod=mod; else mod=vendor; fi && \
+    CGO_ENABLED=0 go build -a -mod=$mod -o /vcluster-hpm ./cmd
+
+FROM ${BASE_IMAGE:-gcr.io/distroless/static:latest}
+ARG CRYPTO_LIB
+WORKDIR /
+# FIPS builds: enforce FIPS 140-3 mode at runtime
+ENV GODEBUG=${CRYPTO_LIB:+fips140=on}
+# Must run as root: hpm creates dirs/symlinks under hostPath-mounted /var/log,
+# /tmp/vcluster and kubelet paths (the :nonroot base tag would set UID 65532).
+USER 0:0
+COPY --from=builder /vcluster-hpm /vcluster-hpm
+
+ENTRYPOINT ["/vcluster-hpm"]
