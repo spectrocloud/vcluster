@@ -30,11 +30,14 @@
 # hardened-images/builder/golang:$(BUILDER_GOLANG_VERSION)-alpine. Bump the
 # default below, or override per run: make release BUILDER_GOLANG_VERSION=x.y.z
 #
+# Requirements: Docker with BuildKit (Docker >= 23), git, make; Go only for the
+# verify targets (they read the binaries' build info with `go version -m`).
+#
 # Auth: pulling the base images needs read access to palette-images and
-# palette-images-dev; pushing needs artifactregistry.repositories.uploadArtifacts
-# on the target registry. Both go through the gcloud credential helper (see the
-# docker-auth target) - ask DevOps for the push service account rather than
-# hardcoding one here.
+# palette-images-dev (us-docker.pkg.dev, us-central1-docker.pkg.dev); pushing
+# needs artifactregistry.repositories.uploadArtifacts on $(REGISTRY). `make
+# docker-auth` configures the gcloud credential helper for all of them - ask
+# DevOps for the push service account rather than hardcoding one here.
 
 SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := help
@@ -98,7 +101,8 @@ BUILD_DIR := $(FIPS_DIR)/.build
 UPSYNC_GIT_URL ?= https://github.com/spectrocloud-labs/vcluster-container-resource-upsync-plugin.git
 UPSYNC_GIT_REF ?= vcluster-v0.36
 UPSYNC_SRC_DIR ?=
-UPSYNC_CONTEXT := $(if $(UPSYNC_SRC_DIR),$(abspath $(UPSYNC_SRC_DIR)),$(BUILD_DIR)/upsync-src)
+# Cloned per variant so FIPS and non-FIPS builds can run concurrently.
+UPSYNC_CONTEXT := $(if $(UPSYNC_SRC_DIR),$(abspath $(UPSYNC_SRC_DIR)),$(BUILD_DIR)/upsync-src-$(VARIANT))
 
 # Which vcluster code upsync and the hostpath-mapper are compiled against:
 #   local    (default) this repo's source, via a go.mod replace - so both track
@@ -166,7 +170,11 @@ verify-fips: ## Verify syncer + upsync + hpm, FIPS variant
 	$(MAKE) verify FIPS=true
 verify-nonfips: ## Verify syncer + upsync + hpm, non-FIPS variant
 	$(MAKE) verify FIPS=false
-release: build-fips build-nonfips push-fips push-nonfips ## Build and push syncer + upsync + hpm, both variants (no coredns)
+release: ## Build and push syncer + upsync + hpm, both variants (no coredns)
+	$(MAKE) build-fips
+	$(MAKE) build-nonfips
+	$(MAKE) push-fips
+	$(MAKE) push-nonfips
 
 # --- build ------------------------------------------------------------------
 .PHONY: build-syncer
@@ -195,6 +203,8 @@ else
 	@echo "using local upsync checkout: $(UPSYNC_CONTEXT)"
 endif
 
+# Also provides the empty build context used by images that fetch their own
+# source (coredns, hpm) and by VCLUSTER_SRC=upstream.
 .PHONY: vcluster-src
 vcluster-src:
 	@mkdir -p "$(EMPTY_CONTEXT)"
@@ -204,12 +214,12 @@ vcluster-src:
 build-all: build-syncer build-upsync build-hpm build-coredns ## Build every image incl. coredns (current FIPS=; coredns is always FIPS)
 
 .PHONY: build-coredns
-build-coredns: ## Build the CoreDNS FIPS image
+build-coredns: vcluster-src ## Build the CoreDNS FIPS image
 	$(DOCKER_BUILD) -f $(FIPS_DIR)/Dockerfile.coredns \
 	  --build-arg BUILDER_GOLANG_VERSION=$(BUILDER_GOLANG_VERSION) \
 	  --build-arg VERSION=$(COREDNS_VERSION) \
 	  $(BASE_IMAGE_ARG) \
-	  -t $(COREDNS_IMAGE) $(REPO_ROOT)
+	  -t $(COREDNS_IMAGE) $(EMPTY_CONTEXT)
 
 .PHONY: build-hpm
 build-hpm: vcluster-src ## Build the vcluster-hostpath-mapper image (FIPS=true|false)
@@ -219,7 +229,7 @@ build-hpm: vcluster-src ## Build the vcluster-hostpath-mapper image (FIPS=true|f
 	  --build-arg VERSION=$(HPM_VERSION) \
 	  --build-arg CRYPTO_LIB=$(CRYPTO_LIB) \
 	  $(BASE_IMAGE_ARG) \
-	  -t $(HPM_IMAGE) $(REPO_ROOT)
+	  -t $(HPM_IMAGE) $(EMPTY_CONTEXT)
 
 # --- push -------------------------------------------------------------------
 .PHONY: push-all
@@ -236,8 +246,11 @@ push-hpm: ## Push the hostpath-mapper image (FIPS=true|false)
 	$(DOCKER) push $(HPM_IMAGE)
 
 .PHONY: docker-auth
-docker-auth: ## Configure the gcloud credential helper for $(REGISTRY)
-	gcloud auth configure-docker $(REGISTRY) --quiet
+# Registries the Dockerfiles pull base images from.
+BASE_REGISTRIES := us-docker.pkg.dev us-central1-docker.pkg.dev
+comma := ,
+docker-auth: ## Configure the gcloud credential helper for $(REGISTRY) and the base-image registries
+	gcloud auth configure-docker $(subst $() ,$(comma),$(sort $(REGISTRY) $(BASE_REGISTRIES))) --quiet
 
 # --- scan / verify ----------------------------------------------------------
 BULWARK  ?= bulwark
