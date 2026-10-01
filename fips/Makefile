@@ -77,6 +77,14 @@ FIPS_PROJECT    ?= palette-images-fips
 NONFIPS_PROJECT ?= palette-images
 PROJECT         := $(if $(FIPS_ON),$(FIPS_PROJECT),$(NONFIPS_PROJECT))
 
+# Spectro CI: SPECTRO_VERSION is overridden by the pipeline from the branch
+# (spectro-release-4.10 → 4.10.<patch>). TAG is what `make version` / image-tags /
+# create-git-tag / marker MAJOR_VERSION consume. Image refs below stay on
+# SYNCER_VERSION / UPSYNC_VERSION / HPM_VERSION unless you opt into Option B.
+
+SPECTRO_VERSION ?= 0.0.0-dev
+TAG             ?= v$(SYNCER_VERSION)-spectro-$(SPECTRO_VERSION)
+
 # --- component versions -----------------------------------------------------
 SYNCER_VERSION  ?= 0.36.3
 # upsync plugin: keep in sync with the image in fips/vcluster.yaml. v0.0.9 is
