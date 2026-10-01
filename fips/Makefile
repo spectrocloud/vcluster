@@ -26,9 +26,12 @@
 #   make build-syncer FIPS=false
 #   make build-upsync push-upsync FIPS=true
 #
-# Go toolchain: every image is compiled in
-# hardened-images/builder/golang:$(BUILDER_GOLANG_VERSION)-alpine. Bump the
-# default below, or override per run: make release BUILDER_GOLANG_VERSION=x.y.z
+# Toolchain / third-party versions - bump the defaults below, or override per
+# run, e.g. make release BUILDER_GOLANG_VERSION=1.26.6 KINE_VERSION=v0.16.4
+#   BUILDER_GOLANG_VERSION  hardened-images/builder/golang:<v>-alpine, every image
+#   THIRDPARTY_VERSION      spectro-third-party:<v> aggregate the syncer's helm
+#                           comes from (helm itself is the aggregate's "latest")
+#   KINE_VERSION            hardened-images/third-party/kine:<v>, in the syncer
 #
 # Requirements: Docker with BuildKit (Docker >= 23), git, make; Go only for the
 # verify targets (they read the binaries' build info with `go version -m`).
@@ -86,6 +89,10 @@ HPM_VERSION     ?= 0.2.7
 
 # --- build inputs -----------------------------------------------------------
 BUILDER_GOLANG_VERSION ?= 1.26.5
+# spectro-third-party aggregate tag; provides the GOFIPS140 helm build.
+THIRDPARTY_VERSION     ?= 4.9
+# earliest 140-3 (GOFIPS140) kine carrier tag.
+KINE_VERSION           ?= v0.16.3
 # Leave BASE_IMAGE empty to take each Dockerfile's default. coredns and the
 # hostpath-mapper fall back to gcr.io/distroless/static when it is unset.
 BASE_IMAGE ?=
@@ -151,6 +158,17 @@ print-images: ## Print the syncer/upsync/hpm references for the current FIPS=
 	@printf '%s\n' $(VCLUSTER_IMAGES)
 
 .PHONY: print-images-all
+.PHONY: print-versions
+print-versions: ## Print the toolchain and component versions in effect
+	@printf '%-24s %s\n' \
+	  BUILDER_GOLANG_VERSION $(BUILDER_GOLANG_VERSION) \
+	  THIRDPARTY_VERSION $(THIRDPARTY_VERSION) \
+	  KINE_VERSION $(KINE_VERSION) \
+	  SYNCER_VERSION $(SYNCER_VERSION) \
+	  UPSYNC_VERSION $(UPSYNC_VERSION) \
+	  HPM_VERSION $(HPM_VERSION) \
+	  COREDNS_VERSION $(COREDNS_VERSION)
+
 print-images-all: ## Print the syncer/upsync/hpm references for both variants
 	@$(MAKE) -s --no-print-directory print-images FIPS=true
 	@$(MAKE) -s --no-print-directory print-images FIPS=false
@@ -181,6 +199,8 @@ release: ## Build and push syncer + upsync + hpm, both variants (no coredns)
 build-syncer: ## Build the vcluster syncer image (FIPS=true|false)
 	$(DOCKER_BUILD) -f $(FIPS_DIR)/Dockerfile.syncfips \
 	  --build-arg BUILDER_GOLANG_VERSION=$(BUILDER_GOLANG_VERSION) \
+	  --build-arg BUILDER_3RDPARTY_VERSION=$(THIRDPARTY_VERSION) \
+	  --build-arg KINE_VERSION=$(KINE_VERSION) \
 	  --build-arg BUILD_VERSION=$(SYNCER_VERSION) \
 	  --build-arg CRYPTO_LIB=$(CRYPTO_LIB) \
 	  -t $(SYNCER_IMAGE) $(REPO_ROOT)

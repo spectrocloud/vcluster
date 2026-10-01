@@ -21,7 +21,8 @@
 
 ARG BUILDER_GOLANG_VERSION=1.26.5
 ARG BUILDER_3RDPARTY_VERSION=4.9
-# earliest 140-3 (GOFIPS140) kine carrier tag
+# earliest 140-3 (GOFIPS140) kine carrier tag. Set from the Makefile
+# (THIRDPARTY_VERSION / KINE_VERSION); these are only the defaults.
 ARG KINE_VERSION=v0.16.3
 
 # --- helm (vertex, GOFIPS140/140-3) from the Spectro third-party aggregate ---
