@@ -1,11 +1,12 @@
-ARG BUILDER_GOLANG_VERSION=1.26.5
+# Set from the Makefile (BUILDER_IMAGE); this is only the default.
+ARG BUILDER_IMAGE=us-central1-docker.pkg.dev/palette-images-dev/hardened-images/builder/golang:1.26-alpine
 ARG BASE_IMAGE
 
 # Build the vcluster hostpath-mapper binary. Same CRYPTO_LIB convention as
 # Dockerfile.syncfips / Dockerfile.upsync:
 #   FIPS:     --build-arg CRYPTO_LIB=fips
 #   non-FIPS: CRYPTO_LIB unset
-FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/builder/golang:${BUILDER_GOLANG_VERSION}-alpine AS builder
+FROM ${BUILDER_IMAGE} AS builder
 
 WORKDIR /workspace
 

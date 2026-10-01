@@ -26,12 +26,13 @@
 #   make build-syncer FIPS=false
 #   make build-upsync push-upsync FIPS=true
 #
-# Toolchain / third-party versions - bump the defaults below, or override per
-# run, e.g. make release BUILDER_GOLANG_VERSION=1.26.6 KINE_VERSION=v0.16.4
-#   BUILDER_GOLANG_VERSION  hardened-images/builder/golang:<v>-alpine, every image
-#   THIRDPARTY_VERSION      spectro-third-party:<v> aggregate the syncer's helm
-#                           comes from (helm itself is the aggregate's "latest")
-#   KINE_VERSION            hardened-images/third-party/kine:<v>, in the syncer
+# Toolchain / third-party images - bump the defaults below, or override per
+# run, e.g. make release BUILDER_GOLANG_VERSION=1.26.6 THIRDPARTY_VERSION=4.11
+#   BUILDER_GOLANG_VERSION  tag of $(BUILDER_REPO), <v>-alpine; every image
+#   THIRDPARTY_VERSION      tag of $(THIRDPARTY_REPO); the syncer's helm and
+#                           kine (each the aggregate's "latest", vertex flavor
+#                           for FIPS, palette flavor for non-FIPS)
+# or replace the whole reference with BUILDER_IMAGE= / THIRDPARTY_IMAGE=
 #
 # Requirements: Docker with BuildKit (Docker >= 23), git, make; Go only for the
 # verify targets (they read the binaries' build info with `go version -m`).
@@ -88,11 +89,15 @@ COREDNS_VERSION ?= 1.14.6
 HPM_VERSION     ?= 0.2.7
 
 # --- build inputs -----------------------------------------------------------
-BUILDER_GOLANG_VERSION ?= 1.26.5
-# spectro-third-party aggregate tag; provides the GOFIPS140 helm build.
-THIRDPARTY_VERSION     ?= 4.9
-# earliest 140-3 (GOFIPS140) kine carrier tag.
-KINE_VERSION           ?= v0.16.3
+HARDENED_REGISTRY      ?= us-central1-docker.pkg.dev/palette-images-dev/hardened-images
+BUILDER_REPO           ?= $(HARDENED_REGISTRY)/builder/golang
+BUILDER_GOLANG_VERSION ?= 1.26
+BUILDER_IMAGE          ?= $(BUILDER_REPO):$(BUILDER_GOLANG_VERSION)-alpine
+THIRDPARTY_REPO        ?= $(HARDENED_REGISTRY)/third-party/spectro-third-party
+THIRDPARTY_VERSION     ?= 4.10
+THIRDPARTY_IMAGE       ?= $(THIRDPARTY_REPO):$(THIRDPARTY_VERSION)
+# Which build of each third-party binary to take: vertex = GOFIPS140.
+THIRDPARTY_FLAVOR      := $(if $(FIPS_ON),vertex,palette)
 # Leave BASE_IMAGE empty to take each Dockerfile's default. coredns and the
 # hostpath-mapper fall back to gcr.io/distroless/static when it is unset.
 BASE_IMAGE ?=
@@ -161,9 +166,9 @@ print-images: ## Print the syncer/upsync/hpm references for the current FIPS=
 .PHONY: print-versions
 print-versions: ## Print the toolchain and component versions in effect
 	@printf '%-24s %s\n' \
-	  BUILDER_GOLANG_VERSION $(BUILDER_GOLANG_VERSION) \
-	  THIRDPARTY_VERSION $(THIRDPARTY_VERSION) \
-	  KINE_VERSION $(KINE_VERSION) \
+	  BUILDER_IMAGE $(BUILDER_IMAGE) \
+	  THIRDPARTY_IMAGE $(THIRDPARTY_IMAGE) \
+	  THIRDPARTY_FLAVOR "$(THIRDPARTY_FLAVOR) (FIPS=$(FIPS))" \
 	  SYNCER_VERSION $(SYNCER_VERSION) \
 	  UPSYNC_VERSION $(UPSYNC_VERSION) \
 	  HPM_VERSION $(HPM_VERSION) \
@@ -198,9 +203,9 @@ release: ## Build and push syncer + upsync + hpm, both variants (no coredns)
 .PHONY: build-syncer
 build-syncer: ## Build the vcluster syncer image (FIPS=true|false)
 	$(DOCKER_BUILD) -f $(FIPS_DIR)/Dockerfile.syncfips \
-	  --build-arg BUILDER_GOLANG_VERSION=$(BUILDER_GOLANG_VERSION) \
-	  --build-arg BUILDER_3RDPARTY_VERSION=$(THIRDPARTY_VERSION) \
-	  --build-arg KINE_VERSION=$(KINE_VERSION) \
+	  --build-arg BUILDER_IMAGE=$(BUILDER_IMAGE) \
+	  --build-arg THIRDPARTY_IMAGE=$(THIRDPARTY_IMAGE) \
+	  --build-arg THIRDPARTY_FLAVOR=$(THIRDPARTY_FLAVOR) \
 	  --build-arg BUILD_VERSION=$(SYNCER_VERSION) \
 	  --build-arg CRYPTO_LIB=$(CRYPTO_LIB) \
 	  -t $(SYNCER_IMAGE) $(REPO_ROOT)
@@ -208,7 +213,7 @@ build-syncer: ## Build the vcluster syncer image (FIPS=true|false)
 .PHONY: build-upsync
 build-upsync: upsync-src vcluster-src ## Build the upsync plugin image (FIPS=true|false)
 	$(DOCKER_BUILD) -f $(FIPS_DIR)/Dockerfile.upsync \
-	  --build-arg BUILDER_GOLANG_VERSION=$(BUILDER_GOLANG_VERSION) \
+	  --build-arg BUILDER_IMAGE=$(BUILDER_IMAGE) \
 	  $(VCLUSTER_SRC_ARG) \
 	  --build-arg CRYPTO_LIB=$(CRYPTO_LIB) \
 	  -t $(UPSYNC_IMAGE) $(UPSYNC_CONTEXT)
@@ -236,7 +241,7 @@ build-all: build-syncer build-upsync build-hpm build-coredns ## Build every imag
 .PHONY: build-coredns
 build-coredns: vcluster-src ## Build the CoreDNS FIPS image
 	$(DOCKER_BUILD) -f $(FIPS_DIR)/Dockerfile.coredns \
-	  --build-arg BUILDER_GOLANG_VERSION=$(BUILDER_GOLANG_VERSION) \
+	  --build-arg BUILDER_IMAGE=$(BUILDER_IMAGE) \
 	  --build-arg VERSION=$(COREDNS_VERSION) \
 	  $(BASE_IMAGE_ARG) \
 	  -t $(COREDNS_IMAGE) $(EMPTY_CONTEXT)
@@ -244,7 +249,7 @@ build-coredns: vcluster-src ## Build the CoreDNS FIPS image
 .PHONY: build-hpm
 build-hpm: vcluster-src ## Build the vcluster-hostpath-mapper image (FIPS=true|false)
 	$(DOCKER_BUILD) -f $(FIPS_DIR)/Dockerfile.hpm \
-	  --build-arg BUILDER_GOLANG_VERSION=$(BUILDER_GOLANG_VERSION) \
+	  --build-arg BUILDER_IMAGE=$(BUILDER_IMAGE) \
 	  $(VCLUSTER_SRC_ARG) \
 	  --build-arg VERSION=$(HPM_VERSION) \
 	  --build-arg CRYPTO_LIB=$(CRYPTO_LIB) \
@@ -315,14 +320,12 @@ define verify_binaries
 	exit $$rc
 endef
 
-# The syncer image always carries the GOFIPS140 kine/helm carrier builds (see
-# Dockerfile.syncfips), so they are only asserted for the FIPS variant.
-VERIFY_TARGETS := $(SYNCER_IMAGE):/vcluster $(UPSYNC_IMAGE):/plugin/plugin $(HPM_IMAGE):/vcluster-hpm
-VERIFY_FIPS_EXTRA := $(SYNCER_IMAGE):/usr/local/bin/kine $(SYNCER_IMAGE):/usr/local/bin/helm
+VERIFY_TARGETS := $(SYNCER_IMAGE):/vcluster $(SYNCER_IMAGE):/usr/local/bin/kine \
+  $(SYNCER_IMAGE):/usr/local/bin/helm $(UPSYNC_IMAGE):/plugin/plugin $(HPM_IMAGE):/vcluster-hpm
 
 .PHONY: verify verify-all
 verify: ## Check syncer + upsync + hpm binaries match the current FIPS= variant
-	$(call verify_binaries,$(VARIANT),$(VERIFY_TARGETS) $(if $(FIPS_ON),$(VERIFY_FIPS_EXTRA),))
+	$(call verify_binaries,$(VARIANT),$(VERIFY_TARGETS))
 verify-all: ## Assert every FIPS image's binaries are GOFIPS140 builds (incl. coredns)
 	@$(MAKE) --no-print-directory verify FIPS=true
 	$(call verify_binaries,fips,$(COREDNS_IMAGE):/coredns)

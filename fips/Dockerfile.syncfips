@@ -14,29 +14,31 @@
 # NOTE: v0.36 execs kine and helm from /binaries (constants.KineBinary /
 # HelmBinary), which the chart's init container fills from the kubernetes
 # distro image. The loft-sh kubernetes -fips distro image does not ship kine or
-# helm, so this image carries the GOFIPS140 carrier builds in /usr/local/bin
-# and the entrypoint seeds them into /binaries when the distro didn't. The
-# non-FIPS distro image ships both, so in the non-FIPS image the seeding is a
-# no-op fallback.
+# helm, so this image carries kine and helm from the Spectro third-party
+# aggregate in /usr/local/bin and the entrypoint seeds them into /binaries when
+# the distro didn't. The non-FIPS distro image ships both, so in the non-FIPS
+# image the seeding is a no-op fallback.
+#
+# The aggregate ships each binary in two flavors, selected with
+# THIRDPARTY_FLAVOR: vertex (GOFIPS140 builds, used for FIPS) and palette
+# (regular builds, used for non-FIPS). The Makefile sets it from FIPS=.
+#
+# Image references are set from the Makefile (BUILDER_IMAGE, THIRDPARTY_IMAGE);
+# the values here are only the defaults.
 
-ARG BUILDER_GOLANG_VERSION=1.26.5
-ARG BUILDER_3RDPARTY_VERSION=4.9
-# earliest 140-3 (GOFIPS140) kine carrier tag. Set from the Makefile
-# (THIRDPARTY_VERSION / KINE_VERSION); these are only the defaults.
-ARG KINE_VERSION=v0.16.3
+ARG BUILDER_IMAGE=us-central1-docker.pkg.dev/palette-images-dev/hardened-images/builder/golang:1.26-alpine
+ARG THIRDPARTY_IMAGE=us-central1-docker.pkg.dev/palette-images-dev/hardened-images/third-party/spectro-third-party:4.10
 
-# --- helm (vertex, GOFIPS140/140-3) from the Spectro third-party aggregate ---
-FROM us-docker.pkg.dev/palette-images/palette/third-party/spectro-third-party:${BUILDER_3RDPARTY_VERSION} AS thirdparty
-
-# --- kine (vertex, GOFIPS140/140-3) from the Spectro third-party carrier ---
-FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/third-party/kine:${KINE_VERSION} AS kine
+# --- helm + kine from the Spectro third-party aggregate ---
+FROM ${THIRDPARTY_IMAGE} AS thirdparty
 
 # --- syncer binary ---
-FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/builder/golang:${BUILDER_GOLANG_VERSION}-alpine AS builder
+FROM ${BUILDER_IMAGE} AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
 ARG BUILD_VERSION=0.0.1
+ARG THIRDPARTY_FLAVOR=vertex
 # NOTE: upstream's Dockerfile also stamps -X ...telemetry.telemetryPrivateKey
 # from a TELEMETRY_PRIVATE_KEY build arg. That symbol does not exist in
 # pkg/telemetry, so the flag is a no-op — and a build arg carrying a secret
@@ -60,7 +62,7 @@ COPY chart/ chart/
 COPY hack/embed-chart.sh hack/embed-chart.sh
 
 # helm needed to package the chart embedded into the binary (pkg/embed)
-COPY --from=thirdparty /binaries/helm/latest/vertex/${TARGETARCH}/helm /usr/local/bin/helm
+COPY --from=thirdparty /binaries/helm/latest/${THIRDPARTY_FLAVOR}/${TARGETARCH}/helm /usr/local/bin/helm
 RUN RELEASE_VERSION=${BUILD_VERSION} bash hack/embed-chart.sh
 
 # Declared here, not at the top of the stage, so the layers above stay cached
@@ -80,6 +82,7 @@ FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/alpine:3.23-d
 
 ARG TARGETARCH
 ARG CRYPTO_LIB
+ARG THIRDPARTY_FLAVOR=vertex
 
 # install runtime dependencies. gcompat provides the glibc dynamic loader:
 # the loft-sh kubernetes -fips distro binaries (kube-apiserver etc.) are
@@ -94,7 +97,7 @@ ENV GODEBUG=${CRYPTO_LIB:+fips140=on}
 WORKDIR /
 
 COPY --from=builder /vcluster .
-COPY --from=kine /binaries/kine/latest/vertex/${TARGETARCH}/kine /usr/local/bin/kine
+COPY --from=thirdparty /binaries/kine/latest/${THIRDPARTY_FLAVOR}/${TARGETARCH}/kine /usr/local/bin/kine
 COPY --from=builder /usr/local/bin/helm /usr/local/bin/helm
 
 # Seed kine/helm into /binaries (an emptyDir filled by the distro init

@@ -1,6 +1,7 @@
 # Build the manager binary
-ARG BUILDER_GOLANG_VERSION=1.26.5
-FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/builder/golang:${BUILDER_GOLANG_VERSION}-alpine AS builder
+# Set from the Makefile (BUILDER_IMAGE); this is only the default.
+ARG BUILDER_IMAGE=us-central1-docker.pkg.dev/palette-images-dev/hardened-images/builder/golang:1.26-alpine
+FROM ${BUILDER_IMAGE} AS builder
 
 # Make sure we use go modules
 WORKDIR /workspace
