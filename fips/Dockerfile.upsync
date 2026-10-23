@@ -43,6 +43,9 @@ ARG CRYPTO_LIB
 # Enforce FIPS 140-3 mode at runtime for FIPS builds
 ENV GODEBUG=${CRYPTO_LIB:+fips140=on}
 
+# The base image lags Alpine's security fixes; take the patched OpenSSL / zlib
+RUN apk upgrade --no-cache libcrypto3 libssl3 zlib
+
 # Set root path as working directory
 WORKDIR /
 
