@@ -99,7 +99,7 @@ HPM_VERSION     ?= 0.2.7
 # --- build inputs -----------------------------------------------------------
 HARDENED_REGISTRY      ?= us-central1-docker.pkg.dev/palette-images-dev/hardened-images
 BUILDER_REPO           ?= $(HARDENED_REGISTRY)/builder/golang
-BUILDER_GOLANG_VERSION ?= 1.26
+BUILDER_GOLANG_VERSION ?= 1.26.10
 BUILDER_IMAGE          ?= $(BUILDER_REPO):$(BUILDER_GOLANG_VERSION)-alpine
 THIRDPARTY_REPO        ?= $(HARDENED_REGISTRY)/third-party/spectro-third-party
 THIRDPARTY_VERSION     ?= 4.10
