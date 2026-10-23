@@ -26,7 +26,7 @@
 # Image references are set from the Makefile (BUILDER_IMAGE, THIRDPARTY_IMAGE);
 # the values here are only the defaults.
 
-ARG BUILDER_IMAGE=us-central1-docker.pkg.dev/palette-images-dev/hardened-images/builder/golang:1.26-alpine
+ARG BUILDER_IMAGE=us-central1-docker.pkg.dev/palette-images-dev/hardened-images/builder/golang:1.26.10-alpine
 ARG THIRDPARTY_IMAGE=us-central1-docker.pkg.dev/palette-images-dev/hardened-images/third-party/spectro-third-party:4.10
 
 # --- helm + kine from the Spectro third-party aggregate ---

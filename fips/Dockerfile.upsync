@@ -1,6 +1,6 @@
 # Build the manager binary
 # Set from the Makefile (BUILDER_IMAGE); this is only the default.
-ARG BUILDER_IMAGE=us-central1-docker.pkg.dev/palette-images-dev/hardened-images/builder/golang:1.26-alpine
+ARG BUILDER_IMAGE=us-central1-docker.pkg.dev/palette-images-dev/hardened-images/builder/golang:1.26.10-alpine
 FROM ${BUILDER_IMAGE} AS builder
 
 # Make sure we use go modules
