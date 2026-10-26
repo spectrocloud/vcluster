@@ -52,7 +52,7 @@ UPSYNC_VERSION  ?= v0.0.9
 SYNCER_VERSION  ?= 0.27.3
 
 # --- build inputs -----------------------------------------------------------
-BUILDER_GOLANG_VERSION ?= 1.26.5
+BUILDER_GOLANG_VERSION ?= 1.26.10
 # Leave BASE_IMAGE empty to take each Dockerfile's default. coredns and the
 # hostpath-mapper fall back to gcr.io/distroless/static when it is unset.
 BASE_IMAGE ?=
