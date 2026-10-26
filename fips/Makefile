@@ -93,8 +93,8 @@ SYNCER_VERSION  ?= 0.36.3
 UPSYNC_VERSION  ?= v0.0.10
 # coredns: CVE floor, do not drop below 1.14.6 (see Dockerfile.coredns).
 COREDNS_VERSION ?= 1.14.6
-# hostpath-mapper: upstream's latest tag; v0.2.7 == main HEAD.
-HPM_VERSION     ?= 0.2.7
+# hostpath-mapper: upstream's latest tag; v0.2.8 == main HEAD (v0.2.7 + Go 1.26.10).
+HPM_VERSION     ?= 0.2.8
 
 # --- build inputs -----------------------------------------------------------
 HARDENED_REGISTRY      ?= us-central1-docker.pkg.dev/palette-images-dev/hardened-images

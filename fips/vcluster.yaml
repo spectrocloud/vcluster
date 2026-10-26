@@ -986,7 +986,7 @@ experimental:
               serviceAccountName: vc-{{ .Release.Name }}
               initContainers:
               - name: hostpath-mapper-init
-                image: us-docker.pkg.dev/palette-images-fips/third-party/loft/vcluster-hpm:0.2.7-fips140-3
+                image: us-docker.pkg.dev/palette-images-fips/third-party/loft/vcluster-hpm:0.2.8-fips140-3
                 command: ["/vcluster-hpm"]
                 env:
                 - name: POD_NAME
@@ -1006,7 +1006,7 @@ experimental:
                   mountPath: /data/server/tls
               containers:
               - name: hostpath-mapper
-                image: us-docker.pkg.dev/palette-images-fips/third-party/loft/vcluster-hpm:0.2.7-fips140-3
+                image: us-docker.pkg.dev/palette-images-fips/third-party/loft/vcluster-hpm:0.2.8-fips140-3
                 command: ["/vcluster-hpm"]
                 env:
                 - name: POD_NAME
