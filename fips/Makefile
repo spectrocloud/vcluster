@@ -34,6 +34,14 @@ IMAGE_PREFIX ?=
 PLATFORM     ?= linux/amd64
 TAG_SUFFIX   ?= fips140-3
 
+# Spectro CI: SPECTRO_VERSION is overridden by the pipeline from the branch
+# (spectro-release-4.9 → 4.9.<patch>). TAG is what `make version` / image-tags /
+# create-git-tag / marker MAJOR_VERSION consume. Image refs below stay on
+# SYNCER_VERSION / UPSYNC_VERSION / HPM_VERSION unless you opt into Option B.
+
+SPECTRO_VERSION ?= 0.0.0-dev
+TAG             ?= v$(SYNCER_VERSION)-spectro-$(SPECTRO_VERSION)
+
 # --- component versions -----------------------------------------------------
 # coredns: CVE floor, do not drop below 1.14.6 (see Dockerfile.coredns).
 COREDNS_VERSION ?= 1.14.6
