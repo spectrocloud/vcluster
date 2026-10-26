@@ -1,4 +1,4 @@
-ARG BUILDER_GOLANG_VERSION=1.26.5
+ARG BUILDER_GOLANG_VERSION=1.26.10
 ARG BASE_IMAGE
 
 # Build the vcluster hostpath-mapper binary (FIPS)

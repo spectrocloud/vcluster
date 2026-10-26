@@ -1,5 +1,5 @@
 # Build the manager binary
-ARG BUILDER_GOLANG_VERSION=1.26.5
+ARG BUILDER_GOLANG_VERSION=1.26.10
 FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/builder/golang:${BUILDER_GOLANG_VERSION}-alpine AS builder
 
 ARG CRYPTO_LIB
@@ -27,6 +27,9 @@ FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/alpine:3.23-d
 ARG CRYPTO_LIB
 # Enforce FIPS 140-3 mode at runtime for FIPS builds
 ENV GODEBUG=${CRYPTO_LIB:+fips140=on}
+
+# The base image lags Alpine's security fixes; take the patched OpenSSL / zlib
+RUN apk upgrade --no-cache libcrypto3 libssl3 zlib
 
 # Set root path as working directory
 WORKDIR /
