@@ -10,6 +10,20 @@ WORKDIR /workspace
 # Copy the Go Modules manifests
 COPY . .
 
+# Build against this repo's vcluster source. The Makefile passes the repo root
+# as the "vcluster-src" build context (VCLUSTER_SRC=local, the default), or an
+# empty directory (VCLUSTER_SRC=upstream) to keep the module version pinned in
+# go.mod. go mod tidy re-resolves the dependency graph against the replaced
+# module, so it also picks up the vcluster repo's dependency versions.
+COPY --from=vcluster-src . /vcluster-src
+RUN if [ -f /vcluster-src/go.mod ]; then \
+        go mod edit -replace github.com/loft-sh/vcluster=/vcluster-src && \
+        go mod tidy && \
+        echo "building against vcluster source: $(head -1 /vcluster-src/go.mod)"; \
+    else \
+        echo "building against pinned module: $(grep 'loft-sh/vcluster ' go.mod)"; \
+    fi
+
 # Install dependencies
 RUN go mod download
 
