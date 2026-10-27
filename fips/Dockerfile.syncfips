@@ -12,7 +12,9 @@
 # kine and helm come from the Spectro third-party aggregate in the matching
 # flavor (vertex = GOFIPS140 builds, palette = regular builds). The Makefile
 # sets both build args from FIPS=.
-# NOTE: kine v0.16.3 / helm v4.2.x (aggregate 4.9) are ahead of this branch's
+# The aggregate is the hardened-images 4.9 tag, which is rebuilt with current
+# Go and dependency fixes (the palette-images copy is not).
+# NOTE: kine v0.17.x / helm v4.3.x (aggregate 4.9) are ahead of this branch's
 # upstream pins (kine v0.14.14 / helm v3.19.2) - the GOFIPS140 builds only
 # start at these versions, and the palette flavor ships the same versions.
 
@@ -20,7 +22,7 @@ ARG BUILDER_GOLANG_VERSION=1.26.10
 ARG BUILDER_3RDPARTY_VERSION=4.9
 
 # --- helm + kine from the Spectro third-party aggregate ---
-FROM us-docker.pkg.dev/palette-images/palette/third-party/spectro-third-party:${BUILDER_3RDPARTY_VERSION} AS thirdparty
+FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/third-party/spectro-third-party:${BUILDER_3RDPARTY_VERSION} AS thirdparty
 
 # --- syncer binary ---
 FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/builder/golang:${BUILDER_GOLANG_VERSION}-alpine AS builder
@@ -77,7 +79,10 @@ ARG THIRDPARTY_FLAVOR=vertex
 # install runtime dependencies. gcompat provides the glibc dynamic loader:
 # the loft-sh kubernetes -fips distro binaries (kube-apiserver etc.) are
 # dynamically linked against glibc and are exec'd by the syncer in this image.
-RUN apk upgrade --no-cache libcrypto3 libssl3 zlib && apk add --no-cache ca-certificates zstd tzdata gcompat
+# The hardened base pins every package in /etc/apk/world, so `apk upgrade`
+# leaves them alone; `apk add --upgrade` replaces the pin and takes the patched
+# OpenSSL / zlib.
+RUN apk add --no-cache --upgrade libcrypto3 libssl3 zlib && apk add --no-cache ca-certificates zstd tzdata gcompat
 
 # FIPS builds: enforce FIPS 140-3 mode at runtime (Go native module). Child
 # processes (kube-apiserver etc., also GOFIPS140 builds) inherit this env.
