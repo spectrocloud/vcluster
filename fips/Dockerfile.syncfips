@@ -87,7 +87,10 @@ ARG THIRDPARTY_FLAVOR=vertex
 # install runtime dependencies. gcompat provides the glibc dynamic loader:
 # the loft-sh kubernetes -fips distro binaries (kube-apiserver etc.) are
 # dynamically linked against glibc and are exec'd by the syncer from /binaries.
-RUN apk upgrade --no-cache libcrypto3 libssl3 zlib && apk add --no-cache ca-certificates zstd tzdata gcompat
+# The hardened base pins every package in /etc/apk/world, so `apk upgrade`
+# leaves them alone; `apk add --upgrade` replaces the pin and takes the patched
+# OpenSSL / zlib.
+RUN apk add --no-cache --upgrade libcrypto3 libssl3 zlib && apk add --no-cache ca-certificates zstd tzdata gcompat
 
 # FIPS builds: enforce FIPS 140-3 mode at runtime (Go native module). Child
 # processes (kube-apiserver etc., also GOFIPS140 builds) inherit this env.
