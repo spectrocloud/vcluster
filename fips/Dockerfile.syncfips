@@ -1,26 +1,26 @@
-# FIPS 140-3 build of the vcluster syncer image (PPD-1597).
-# Syncer compiled with the Go Cryptographic Module v1.0.0 (GOFIPS140,
-# FIPS 140-3, NIST CMVP cert #4985); kine and helm taken from the Spectro
-# third-party carriers (also GOFIPS140 — verified by binary scan). FIPS mode
-# enforced at runtime via GODEBUG=fips140=on (override to =off for non-FIPS
-# environments — single-image pattern per the FIPS Images Roadmap).
-# The palette (non-FIPS) image continues to be built from Dockerfile.release;
-# no CRYPTO_LIB dual-mode here for that reason.
-# NOTE: kine v0.16.3 / helm (aggregate 4.9, v4.2.x) are ahead of this branch's
-# pins (kine v0.14.14 / helm v3.19.2) — the GOFIPS140 carrier builds only
-# start at these versions. Ask DevOps for pinned-version GOFIPS140 carrier
-# builds to restore parity, then bump the ARGs down.
+# vcluster syncer image (PPD-1597), v0.27 line. One Dockerfile for both the
+# FIPS and the non-FIPS image, following the CRYPTO_LIB convention used by
+# the v0.36 line and the upsync plugin:
+#
+#   FIPS:     --build-arg CRYPTO_LIB=fips --build-arg THIRDPARTY_FLAVOR=vertex
+#             syncer compiled with the Go Cryptographic Module v1.0.0
+#             (GOFIPS140, FIPS 140-3, NIST CMVP cert #4985) and FIPS mode
+#             enforced at runtime via GODEBUG=fips140=on.
+#   non-FIPS: CRYPTO_LIB unset, THIRDPARTY_FLAVOR=palette - regular build
+#             against the standard Go crypto library, no GODEBUG override.
+#
+# kine and helm come from the Spectro third-party aggregate in the matching
+# flavor (vertex = GOFIPS140 builds, palette = regular builds). The Makefile
+# sets both build args from FIPS=.
+# NOTE: kine v0.16.3 / helm v4.2.x (aggregate 4.9) are ahead of this branch's
+# upstream pins (kine v0.14.14 / helm v3.19.2) - the GOFIPS140 builds only
+# start at these versions, and the palette flavor ships the same versions.
 
 ARG BUILDER_GOLANG_VERSION=1.26.10
 ARG BUILDER_3RDPARTY_VERSION=4.9
-# earliest 140-3 (GOFIPS140) kine carrier tag
-ARG KINE_VERSION=v0.16.3
 
-# --- helm (vertex, GOFIPS140/140-3) from the Spectro third-party aggregate ---
+# --- helm + kine from the Spectro third-party aggregate ---
 FROM us-docker.pkg.dev/palette-images/palette/third-party/spectro-third-party:${BUILDER_3RDPARTY_VERSION} AS thirdparty
-
-# --- kine (vertex, GOFIPS140/140-3) from the Spectro third-party carrier ---
-FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/third-party/kine:${KINE_VERSION} AS kine
 
 # --- syncer binary ---
 FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/builder/golang:${BUILDER_GOLANG_VERSION}-alpine AS builder
@@ -28,6 +28,7 @@ FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/builder/golan
 ARG TARGETOS
 ARG TARGETARCH
 ARG BUILD_VERSION=0.0.1
+ARG THIRDPARTY_FLAVOR=vertex
 # NOTE: upstream's Dockerfile also stamps -X ...telemetry.telemetryPrivateKey
 # from a TELEMETRY_PRIVATE_KEY build arg. That symbol no longer exists in this
 # branch's pkg/telemetry, so the flag is a no-op — and a build arg carrying a
@@ -51,12 +52,18 @@ COPY chart/ chart/
 COPY hack/embed-chart.sh hack/embed-chart.sh
 
 # helm needed to package the chart embedded into the binary (pkg/embed)
-COPY --from=thirdparty /binaries/helm/latest/vertex/${TARGETARCH}/helm /usr/local/bin/helm
+COPY --from=thirdparty /binaries/helm/latest/${THIRDPARTY_FLAVOR}/${TARGETARCH}/helm /usr/local/bin/helm
 RUN RELEASE_VERSION=${BUILD_VERSION} bash hack/embed-chart.sh
 
-# FIPS 140-3: GOFIPS140 selects the validated Go Cryptographic Module at
-# compile time; no cgo or special linking required.
-RUN CGO_ENABLED=0 GOFIPS140=v1.0.0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+# Declared here, not at the top of the stage, so the layers above stay cached
+# across the FIPS and non-FIPS builds.
+ARG CRYPTO_LIB
+
+# CRYPTO_LIB set -> FIPS 140-3: GOFIPS140 selects the validated Go
+# Cryptographic Module at compile time; no cgo or special linking required.
+# CRYPTO_LIB unset -> regular build against the standard Go crypto library.
+RUN if [ -n "${CRYPTO_LIB}" ]; then export GOFIPS140=v1.0.0; fi && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -a -mod=mod -tags embed_chart \
       -ldflags '-X github.com/loft-sh/vcluster/pkg/telemetry.SyncerVersion='"${BUILD_VERSION}" \
       -o /vcluster ./cmd/vcluster
@@ -64,21 +71,23 @@ RUN CGO_ENABLED=0 GOFIPS140=v1.0.0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 FROM us-central1-docker.pkg.dev/palette-images-dev/hardened-images/alpine:3.23-dev
 
 ARG TARGETARCH
+ARG CRYPTO_LIB
+ARG THIRDPARTY_FLAVOR=vertex
 
 # install runtime dependencies. gcompat provides the glibc dynamic loader:
 # the loft-sh kubernetes -fips distro binaries (kube-apiserver etc.) are
 # dynamically linked against glibc and are exec'd by the syncer in this image.
 RUN apk upgrade --no-cache libcrypto3 libssl3 zlib && apk add --no-cache ca-certificates zstd tzdata gcompat
 
-# Enforce FIPS 140-3 mode at runtime (Go native module). Child processes
-# (kube-apiserver etc., also GOFIPS140 builds) inherit this env.
-ENV GODEBUG=fips140=on
+# FIPS builds: enforce FIPS 140-3 mode at runtime (Go native module). Child
+# processes (kube-apiserver etc., also GOFIPS140 builds) inherit this env.
+ENV GODEBUG=${CRYPTO_LIB:+fips140=on}
 
 # Set root path as working directory
 WORKDIR /
 
 COPY --from=builder /vcluster .
-COPY --from=kine /binaries/kine/latest/vertex/${TARGETARCH}/kine /usr/local/bin/kine
+COPY --from=thirdparty /binaries/kine/latest/${THIRDPARTY_FLAVOR}/${TARGETARCH}/kine /usr/local/bin/kine
 COPY --from=builder /usr/local/bin/helm /usr/local/bin/helm
 
 ENTRYPOINT ["/vcluster", "start"]
