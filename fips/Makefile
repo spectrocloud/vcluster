@@ -141,8 +141,10 @@ VCLUSTER_SRC_ARG  = --build-context vcluster-src=$(VCLUSTER_CONTEXT)
 # Per-image repository paths. Setting IMAGE_PREFIX overrides all of them and
 # puts every image under $(IMAGE_PREFIX)/<name>.
 repo_path     = $(if $(IMAGE_PREFIX),$(IMAGE_PREFIX)/$(2),$(1))
+# Upsync's path under $(PROJECT); override where the project has no palette/ repo.
+UPSYNC_PATH  ?= palette/vcluster-upsync-plugin
 SYNCER_REPO  := $(call repo_path,$(PROJECT)/third-party/vcluster-oss,vcluster-oss)
-UPSYNC_REPO  := $(call repo_path,$(PROJECT)/palette/vcluster-upsync-plugin,vcluster-upsync-plugin)
+UPSYNC_REPO  := $(call repo_path,$(PROJECT)/$(UPSYNC_PATH),vcluster-upsync-plugin)
 COREDNS_REPO := $(call repo_path,$(FIPS_PROJECT)/third-party/vcluster/coredns,coredns)
 HPM_REPO     := $(call repo_path,$(PROJECT)/third-party/loft/vcluster-hpm,vcluster-hpm)
 
